@@ -5,30 +5,7 @@ from typing import Any
 
 import yaml
 
-
-def _base_profile_name(resource_profile: str) -> str:
-    return resource_profile.split(":", 1)[0]
-
-
-def _vllm_args(service: dict[str, Any]) -> list[str]:
-    args = [
-        f"--served-model-name={service['served_model_name']}",
-        f"--tensor-parallel-size={service['tensor_parallel_size']}",
-        f"--data-parallel-size={service['data_parallel_size']}",
-        f"--max-model-len={service['max_model_len']}",
-        f"--gpu-memory-utilization={service['gpu_memory_utilization']}",
-        f"--max-num-batched-tokens={service['max_num_batched_tokens']}",
-        f"--max-num-seqs={service['max_num_seqs']}",
-        "--disable-log-requests",
-    ]
-    if service.get("enable_prefix_caching"):
-        args.append("--enable-prefix-caching")
-    if service.get("enable_auto_tool_choice"):
-        args.append("--enable-auto-tool-choice")
-        if service.get("tool_call_parser"):
-            args.append(f"--tool-call-parser={service['tool_call_parser']}")
-    args.extend(service.get("extra_args", []))
-    return args
+from ..profile_runtime import vllm_args
 
 
 def _resource_profile_values(plan: dict[str, Any]) -> dict[str, Any]:
@@ -57,7 +34,15 @@ def _model_doc(service: dict[str, Any]) -> dict[str, Any]:
     doc = {
         "apiVersion": "kubeai.org/v1",
         "kind": "Model",
-        "metadata": {"name": service["service_name"]},
+        "metadata": {
+            "name": service["kubernetes_name"],
+            "annotations": {
+                "vllm-service/profile-name": service["profile_name"],
+                "vllm-service/public-name": service["profile_public_name"],
+                "vllm-service/logical-model-name": service["logical_model_name"],
+                "vllm-service/protocol-mode": service["protocol_mode"],
+            },
+        },
         "spec": {
             "features": service.get("features", ["TextGeneration"]),
             "url": service["model_url"],
@@ -65,7 +50,7 @@ def _model_doc(service: dict[str, Any]) -> dict[str, Any]:
             "resourceProfile": service["resource_profile"],
             "minReplicas": int(service.get("min_replicas", 0)),
             "maxReplicas": int(service.get("max_replicas", 1)),
-            "args": _vllm_args(service),
+            "args": vllm_args(service),
         },
     }
     if service.get("priority_class_name"):
@@ -144,7 +129,7 @@ Chart: `{cluster.get('kubeai_chart', 'kubeai/kubeai')}`
 Files:
 - `namespace.yaml`: namespace to apply before the chart and models
 - `kubeai-values.yaml`: custom resource profiles for the KubeAI chart
-- `models.yaml`: KubeAI `Model` objects derived from the active profile
+- `models.yaml`: KubeAI `Model` objects derived intentionally from the selected serving profile(s)
 - `ingress.yaml`: optional ingress for one stable hostname
 
 Typical flow:

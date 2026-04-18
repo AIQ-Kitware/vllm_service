@@ -353,6 +353,179 @@ profiles:
       aliases:
         qwen3.5-9b: qwen-main
 
+  qwen2-72b-instruct-tp2-balanced:
+    description: "Audit serving profile for qwen/qwen2-72b-instruct on tp=2."
+    base_model: qwen2-72b-instruct
+    public_name: qwen2-72b-instruct-tp2-balanced
+    logical_model_name: qwen/qwen2-72b-instruct
+    served_model_name: qwen/qwen2-72b-instruct
+    protocol_mode: chat
+    resource_profile: gpu-tp2-balanced
+    placement:
+      strategy: first_fit
+      gpu_count: 2
+    topology:
+      tp: 2
+      dp: 1
+    tags: [audit, helm, qwen]
+    audit_notes:
+      - Preserve the HELM logical model identity while serving locally through a named profile.
+    vllm:
+      enable_responses_api_store: false
+      logging_level: INFO
+
+  qwen2-5-7b-instruct-turbo-default:
+    description: "Audit serving profile for qwen/qwen2.5-7b-instruct-turbo."
+    base_model: qwen2.5-7b-instruct
+    public_name: qwen2-5-7b-instruct-turbo-default
+    logical_model_name: qwen/qwen2.5-7b-instruct-turbo
+    served_model_name: qwen/qwen2.5-7b-instruct-turbo
+    protocol_mode: chat
+    resource_profile: gpu-single-default
+    placement:
+      strategy: first_fit
+      gpu_count: 1
+    tags: [audit, helm, qwen]
+    vllm:
+      enable_responses_api_store: false
+      logging_level: INFO
+
+  qwen2-5-72b-instruct-tp2-balanced:
+    description: "Audit serving profile for qwen/qwen2.5-72b-instruct-turbo on tp=2."
+    base_model: qwen2.5-72b-instruct
+    public_name: qwen2-5-72b-instruct-tp2-balanced
+    logical_model_name: qwen/qwen2.5-72b-instruct-turbo
+    served_model_name: qwen/qwen2.5-72b-instruct-turbo
+    protocol_mode: chat
+    resource_profile: gpu-tp2-balanced
+    placement:
+      strategy: first_fit
+      gpu_count: 2
+    topology:
+      tp: 2
+      dp: 1
+    tags: [audit, helm, qwen]
+    vllm:
+      enable_responses_api_store: false
+      logging_level: INFO
+
+  qwen3-5-122b-a10b-tp2-balanced:
+    description: "Audit serving profile for Qwen/Qwen3.5-122B-A10B on tp=2."
+    base_model: qwen3.5-122b-a10b
+    public_name: qwen3-5-122b-a10b-tp2-balanced
+    logical_model_name: qwen/qwen3.5-122b-a10b
+    served_model_name: qwen/qwen3.5-122b-a10b
+    protocol_mode: chat
+    resource_profile: gpu-tp2-balanced
+    placement:
+      strategy: first_fit
+      gpu_count: 2
+    topology:
+      tp: 2
+      dp: 1
+    tags: [audit, helm, qwen]
+    vllm:
+      enable_responses_api_store: false
+      logging_level: INFO
+
+  qwen3-5-122b-a10b-maxctx:
+    description: "Audit serving profile for Qwen/Qwen3.5-122B-A10B with larger context and lower concurrency."
+    base_model: qwen3.5-122b-a10b
+    public_name: qwen3-5-122b-a10b-maxctx
+    logical_model_name: qwen/qwen3.5-122b-a10b
+    served_model_name: qwen/qwen3.5-122b-a10b
+    protocol_mode: chat
+    resource_profile: gpu-tp2-maxctx
+    placement:
+      strategy: first_fit
+      gpu_count: 2
+    topology:
+      tp: 2
+      dp: 1
+    runtime:
+      max_model_len: 65536
+      max_num_seqs: 2
+      max_num_batched_tokens: 4096
+      gpu_memory_utilization: 0.95
+    tags: [audit, helm, qwen, max-context]
+    audit_notes:
+      - This profile intentionally trades concurrency for context length.
+    vllm:
+      enable_responses_api_store: false
+      logging_level: INFO
+
+  gpt-oss-20b-chat:
+    description: "Audit serving profile for openai/gpt-oss-20b via chat-completions semantics."
+    base_model: gpt-oss-20b
+    public_name: gpt-oss-20b-chat
+    logical_model_name: openai/gpt-oss-20b
+    served_model_name: openai/gpt-oss-20b
+    protocol_mode: chat
+    resource_profile: gpu-single-default
+    placement:
+      strategy: first_fit
+      gpu_count: 1
+    tags: [audit, helm, gpt-oss, chat]
+    audit_notes:
+      - Exported HELM bundles should use a chat-capable client class for this profile.
+    vllm:
+      enable_responses_api_store: false
+      logging_level: INFO
+
+  gpt-oss-20b-completions:
+    description: "Audit serving profile for openai/gpt-oss-20b via legacy completions semantics."
+    base_model: gpt-oss-20b
+    public_name: gpt-oss-20b-completions
+    logical_model_name: openai/gpt-oss-20b
+    served_model_name: openai/gpt-oss-20b
+    protocol_mode: completions
+    resource_profile: gpu-single-default
+    placement:
+      strategy: first_fit
+      gpu_count: 1
+    tags: [audit, helm, gpt-oss, completions]
+    audit_notes:
+      - Exported HELM bundles should use a completions-capable client class for this profile.
+    vllm:
+      enable_responses_api_store: false
+      logging_level: INFO
+
+  vicuna-7b-v1-3-no-chat-template:
+    description: "Audit serving profile for legacy Vicuna prompting without relying on a chat template."
+    base_model: vicuna-7b-v1.3
+    public_name: vicuna-7b-v1-3-no-chat-template
+    logical_model_name: lmsys/vicuna-7b-v1.3
+    served_model_name: lmsys/vicuna-7b-v1.3
+    protocol_mode: completions
+    resource_profile: gpu-single-default
+    placement:
+      strategy: first_fit
+      gpu_count: 1
+    extra_args:
+      - --disable-frontend-multiprocessing
+    tags: [audit, helm, vicuna, completions]
+    audit_notes:
+      - Keep this profile separate from chat-oriented transports because prompt formatting matters scientifically.
+    vllm:
+      enable_responses_api_store: false
+      logging_level: INFO
+
+  pythia-6-9b-default:
+    description: "Audit serving profile for EleutherAI/pythia-6.9b."
+    base_model: pythia-6.9b
+    public_name: pythia-6-9b-default
+    logical_model_name: eleutherai/pythia-6.9b
+    served_model_name: eleutherai/pythia-6.9b
+    protocol_mode: completions
+    resource_profile: gpu-single-default
+    placement:
+      strategy: first_fit
+      gpu_count: 1
+    tags: [audit, helm, pythia, completions]
+    vllm:
+      enable_responses_api_store: false
+      logging_level: INFO
+
   # ── HELM evaluation profiles ──────────────────────────────────────────────
   # One profile per HELM model. Switch to the target model, run evals, switch
   # back. The served_model_name in each service matches the HELM side tag

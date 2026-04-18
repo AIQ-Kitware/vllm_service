@@ -8,6 +8,7 @@ from typing import Any
 
 import requests
 
+from .catalog import PROFILE_NAME_ALIASES, profile_summary
 from .benchmark import run_benchmark
 from .config import (
     CONFIG_FILE,
@@ -17,15 +18,19 @@ from .config import (
     PLAN_FILE,
     initial_config,
     load_yaml,
+    normalized_catalogs,
     save_yaml,
 )
 from .docker_utils import compose_down, compose_up
 from .env_utils import parse_env_file
+from .exporters import export_helm_bundle
 from .hardware import simulate_inventory
 from .kubeai_ops import deploy_rendered_artifacts, print_status as kubeai_print_status
+from .profile_runtime import default_base_url
 from .renderer import render_from_lock
 from .resolver import resolve
 from .validator import validate_resolved
+from .verification import verify_profile
 
 
 def root_dir() -> Path:
@@ -294,10 +299,8 @@ def cmd_switch(args: argparse.Namespace) -> int:
 
 
 def cmd_list_models(args: argparse.Namespace) -> int:
-    from .config import merged_catalogs
-
     cfg = load_config() if config_path().exists() else initial_config()
-    cats = merged_catalogs(root_dir(), cfg)
+    cats = normalized_catalogs(root_dir(), cfg)
     for name, model in cats.get("models", {}).items():
         ref = model.get("hf_model_id") or model.get("url", "")
         print(f"{name}: {ref}")
@@ -305,13 +308,20 @@ def cmd_list_models(args: argparse.Namespace) -> int:
 
 
 def cmd_list_profiles(args: argparse.Namespace) -> int:
-    from .config import merged_catalogs
-
     cfg = load_config() if config_path().exists() else initial_config()
-    cats = merged_catalogs(root_dir(), cfg)
-    profiles = {**cats.get("profiles", {}), **cfg.get("profiles", {})}
+    cats = normalized_catalogs(root_dir(), cfg)
+    profiles = cats.get("profiles", {})
+    hidden_legacy = set(PROFILE_NAME_ALIASES)
     for name, profile in profiles.items():
-        print(f"{name}: {profile.get('description', '')}")
+        if name in hidden_legacy:
+            continue
+        if profile.get("kind") == "invalid-profile":
+            continue
+        summary = profile_summary(profile)
+        print(
+            f"{name}: public={summary['public_name']} logical={summary['logical_model_name']} "
+            f"protocol={summary['protocol_mode']} base_model={summary['base_model']}"
+        )
     return 0
 
 
@@ -321,6 +331,39 @@ def cmd_explain(args: argparse.Namespace) -> int:
         raise SystemExit(f"Missing file: {target}")
     print(json.dumps(load_yaml(target), indent=2))
     return 0
+
+
+def cmd_export_helm_bundle(args: argparse.Namespace) -> int:
+    cfg = load_config()
+    plan = build_plan(
+        cfg,
+        profile_name=args.profile,
+        allow_unsupported=effective_allow_unsupported(args, cfg),
+        inventory=effective_inventory(args),
+    )
+    ensure_renderable(plan)
+    result = export_helm_bundle(
+        root_dir(),
+        plan["deployment"],
+        base_url=args.base_url,
+        output_dir=Path(args.output_dir) if args.output_dir else None,
+    )
+    print(f"Wrote {result['bundle_path']}")
+    print(f"Wrote {result['model_deployments_path']}")
+    return 0
+
+
+def cmd_verify_profile(args: argparse.Namespace) -> int:
+    cfg = load_config()
+    plan = build_plan(
+        cfg,
+        profile_name=args.profile,
+        allow_unsupported=effective_allow_unsupported(args, cfg),
+        inventory=effective_inventory(args),
+    )
+    result = verify_profile(root_dir(), plan["deployment"])
+    print(json.dumps(result, indent=2))
+    return 0 if result["ok"] else 2
 
 
 def cmd_benchmark(args: argparse.Namespace) -> int:
@@ -364,15 +407,8 @@ def cmd_status(args: argparse.Namespace) -> int:
 
 
 def _infer_default_base_url(cfg: dict[str, Any], args: argparse.Namespace) -> str:
-    if args.base_url:
-        return args.base_url.rstrip("/")
-    if backend_name(cfg) == "kubeai":
-        ingress = cfg.get("cluster", {}).get("ingress", {})
-        host = ingress.get("host", "")
-        if ingress.get("enabled") and host:
-            return f"http://{host}/openai/v1"
-        return "http://127.0.0.1:8000/openai/v1"
-    return f"http://127.0.0.1:{cfg['ports']['litellm']}/v1"
+    deployment = {"backend": backend_name(cfg), "cluster": cfg.get("cluster", {}), "ports": cfg.get("ports", {})}
+    return default_base_url(deployment, explicit=args.base_url)
 
 
 def cmd_smoke_test(args: argparse.Namespace) -> int:
@@ -445,6 +481,20 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("explain")
     s.add_argument("--file", default=None)
     s.set_defaults(func=cmd_explain)
+
+    s = sub.add_parser("export-helm-bundle")
+    s.add_argument("profile")
+    s.add_argument("--base-url", default=None)
+    s.add_argument("--output-dir", default=None)
+    s.add_argument("--allow-unsupported", action="store_true")
+    s.add_argument("--simulate-hardware", default=None, metavar="NxM", help="Simulate N GPUs with M GiB each (e.g. 4x96, 2x80).")
+    s.set_defaults(func=cmd_export_helm_bundle)
+
+    s = sub.add_parser("verify-profile")
+    s.add_argument("profile")
+    s.add_argument("--allow-unsupported", action="store_true")
+    s.add_argument("--simulate-hardware", default=None, metavar="NxM", help="Simulate N GPUs with M GiB each (e.g. 4x96, 2x80).")
+    s.set_defaults(func=cmd_verify_profile)
 
     s = sub.add_parser("benchmark")
     s.add_argument("--model", required=True)

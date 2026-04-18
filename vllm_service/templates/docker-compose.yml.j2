@@ -20,6 +20,11 @@ services:
     image: {{ lock.deployment.images.vllm }}
     container_name: vllm-{{ svc.service_name }}
     restart: unless-stopped
+    labels:
+      vllm_service.profile_name: "{{ svc.profile_name }}"
+      vllm_service.public_name: "{{ svc.profile_public_name }}"
+      vllm_service.logical_model_name: "{{ svc.logical_model_name }}"
+      vllm_service.protocol_mode: "{{ svc.protocol_mode }}"
     environment:
       NVIDIA_DRIVER_CAPABILITIES: compute,utility
       HF_TOKEN: ${HF_TOKEN}
@@ -58,6 +63,9 @@ services:
       - --tool-call-parser
       - "{{ svc.tool_call_parser }}"
 {% endif %}
+{% for extra_arg in svc.extra_args %}
+      - "{{ extra_arg }}"
+{% endfor %}
     volumes:
       - {{ lock.deployment.state.hf_cache }}:/root/.cache/huggingface
     ports:

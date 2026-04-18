@@ -4,6 +4,7 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
+from .catalog import canonical_profile_name, normalize_model_catalog, normalize_profile_catalog
 from .config import merged_catalogs, normalized_cluster, normalized_state
 from .hardware import detect_inventory
 
@@ -32,8 +33,14 @@ def _runtime_value(service: dict[str, Any], model: dict[str, Any], key: str, def
     return model.get("defaults", {}).get(key, default)
 
 
-def _resolve_service(service: dict[str, Any], models: dict[str, Any], inventory: dict[str, Any], policy: dict[str, Any], used: set[int]) -> dict[str, Any]:
-    model_key = service["model"]
+def _resolve_service(
+    service: dict[str, Any],
+    models: dict[str, Any],
+    inventory: dict[str, Any],
+    policy: dict[str, Any],
+    used: set[int],
+) -> dict[str, Any]:
+    model_key = service["base_model"]
     if model_key not in models:
         raise KeyError(f"Unknown model: {model_key}")
     model = deepcopy(models[model_key])
@@ -68,20 +75,30 @@ def _resolve_service(service: dict[str, Any], models: dict[str, Any], inventory:
 
     hf_model_id = service.get("hf_model_id", model.get("hf_model_id", ""))
     model_url = service.get("url") or model.get("url") or (f"hf://{hf_model_id}" if hf_model_id else "")
+    transport = deepcopy(service.get("transport", {}))
 
     return {
         "service_name": service["service_name"],
+        "profile_name": service["profile_name"],
+        "profile_public_name": service["public_name"],
+        "kubernetes_name": service["kubernetes_name"],
         "model_ref": model_key,
         "hf_model_id": hf_model_id,
         "model_url": model_url,
+        "logical_model_name": service.get("logical_model_name", model.get("logical_model_name", model_key)),
         "served_model_name": service.get("served_model_name", model.get("served_model_name", model_key)),
+        "served_aliases": deepcopy(service.get("served_aliases", [])),
+        "protocol_mode": service.get("protocol_mode", "chat"),
         "modalities": model.get("modalities", ["text"]),
         "features": deepcopy(model.get("features", ["TextGeneration"])),
         "engine": str(service.get("engine", model.get("engine", "VLLM"))).upper(),
         "memory_class_gib": model.get("memory_class_gib"),
         "min_vram_gib_per_replica": model.get("min_vram_gib_per_replica", 0),
         "context_window": model.get("context_window"),
-        "notes": model.get("notes", []),
+        "tokenizer_name": service.get("tokenizer_name", model.get("tokenizer_name", service.get("logical_model_name", model_key))),
+        "notes": deepcopy(model.get("notes", [])) + deepcopy(service.get("notes", [])),
+        "audit_notes": deepcopy(service.get("audit_notes", [])) + deepcopy(model.get("caveats", [])),
+        "tags": deepcopy(service.get("tags", [])),
         "gpu_indices": gpu_indices,
         "tensor_parallel_size": tp,
         "data_parallel_size": dp,
@@ -95,45 +112,84 @@ def _resolve_service(service: dict[str, Any], models: dict[str, Any], inventory:
         "max_num_batched_tokens": int(_runtime_value(service, model, "max_num_batched_tokens", 8192)),
         "max_num_seqs": int(_runtime_value(service, model, "max_num_seqs", 16)),
         "thinking_history_policy": model.get("thinking_history_policy", "keep_final_only"),
+        "placement": placement,
+        "topology": topology,
         "placement_error": placement_error,
         "enable_auto_tool_choice": enable_auto_tool_choice,
         "tool_call_parser": tool_call_parser,
         "extra_args": deepcopy(service.get("extra_args", model.get("defaults", {}).get("extra_args", []))),
+        "transport": transport,
     }
 
 
-def resolve(root: Path, config: dict[str, Any], inventory: dict[str, Any] | None = None, profile_name: str | None = None) -> dict[str, Any]:
-    catalogs = merged_catalogs(root, config)
+def _resolve_router_aliases(profile: dict[str, Any], services: list[dict[str, Any]]) -> dict[str, str]:
+    explicit = deepcopy(profile.get("router", {}).get("aliases", {}))
+    if explicit:
+        return explicit
+    aliases: dict[str, str] = {}
+    for service in services:
+        for alias in service.get("served_aliases", []):
+            aliases[alias] = service["service_name"]
+    return aliases
+
+
+def resolve(
+    root: Path,
+    config: dict[str, Any],
+    inventory: dict[str, Any] | None = None,
+    profile_name: str | None = None,
+) -> dict[str, Any]:
+    raw_catalogs = merged_catalogs(root, config)
+    models = normalize_model_catalog(raw_catalogs.get("models", {}))
+    raw_profiles = {**deepcopy(raw_catalogs.get("profiles", {})), **deepcopy(config.get("profiles", {}))}
+    profiles = normalize_profile_catalog(raw_profiles, models)
+    catalogs = {"models": models, "profiles": profiles}
     inventory = deepcopy(inventory) if inventory is not None else detect_inventory()
-    effective_profile_name = profile_name or config.get("active_profile")
-    profiles = deepcopy(catalogs.get("profiles", {}))
-    profiles = {**profiles, **deepcopy(config.get("profiles", {}))}
+    effective_profile_name = canonical_profile_name(profile_name or config.get("active_profile"))
     if effective_profile_name not in profiles:
         raise KeyError(f"Unknown profile: {effective_profile_name}")
     profile = deepcopy(profiles[effective_profile_name])
+    if profile.get("kind") == "invalid-profile":
+        raise KeyError(f"Profile {effective_profile_name!r} is invalid: {profile.get('catalog_error', 'unknown error')}")
 
     merged_policy = {**deepcopy(config.get("policy", {})), **deepcopy(profile.get("policy", {}))}
     backend = str(config.get("backend", "compose")).lower()
     used: set[int] = set()
     services = []
     for service in profile.get("services", []):
-        service_name = service.get("service_name") or service.get("name")
-        if not service_name:
-            raise KeyError("Each service must define service_name")
         normalized_service = deepcopy(service)
-        normalized_service["service_name"] = service_name
+        normalized_service["profile_name"] = profile["name"]
         service_used = set(used) if backend == "compose" else set()
         resolved_service = _resolve_service(normalized_service, catalogs.get("models", {}), inventory, merged_policy, service_used)
         if backend == "compose":
             used.update(resolved_service.get("gpu_indices", []))
         services.append(resolved_service)
 
-    aliases = deepcopy(profile.get("router", {}).get("aliases", {}))
-    if not aliases:
-        aliases = {svc["served_model_name"]: svc["service_name"] for svc in services}
+    aliases = _resolve_router_aliases(profile, services)
+    primary_service = services[0] if services else {}
+
+    serving_profile = {
+        "name": profile["name"],
+        "public_name": profile["public_name"],
+        "kind": profile.get("kind", "serving-profile"),
+        "description": profile.get("description", ""),
+        "base_model": profile.get("base_model", primary_service.get("model_ref", "")),
+        "logical_model_name": profile.get("logical_model_name", primary_service.get("logical_model_name", "")),
+        "served_model_name": profile.get("served_model_name", primary_service.get("served_model_name", "")),
+        "served_aliases": deepcopy(primary_service.get("served_aliases", profile.get("served_aliases", []))),
+        "protocol_mode": profile.get("protocol_mode", primary_service.get("protocol_mode", "chat")),
+        "engine": profile.get("engine", primary_service.get("engine", "VLLM")),
+        "resource_profile": profile.get("resource_profile", primary_service.get("resource_profile", "")),
+        "service_name": profile.get("service_name", primary_service.get("service_name", "")),
+        "kubernetes_name": profile.get("kubernetes_name", primary_service.get("kubernetes_name", "")),
+        "tags": deepcopy(profile.get("tags", [])),
+        "audit_notes": deepcopy(profile.get("audit_notes", [])),
+        "notes": deepcopy(profile.get("notes", [])),
+        "transport": deepcopy(profile.get("transport", {})),
+    }
 
     return {
-        "schema_version": 3,
+        "schema_version": 4,
         "source": {
             "config_file": "config.yaml",
             "active_profile": effective_profile_name,
@@ -150,10 +206,8 @@ def resolve(root: Path, config: dict[str, Any], inventory: dict[str, Any] | None
         "cluster": normalized_cluster(config.get("cluster", {})),
         "resource_profiles": deepcopy(config.get("resource_profiles", {})),
         "inventory": inventory,
-        "profile": {
-            "name": effective_profile_name,
-            "description": profile.get("description", ""),
-        },
+        "profile": serving_profile,
+        "serving_profile": deepcopy(serving_profile),
         "services": services,
         "router": {
             "enabled": True,

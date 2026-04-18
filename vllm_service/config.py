@@ -7,6 +7,7 @@ from typing import Any
 
 import yaml
 
+from .catalog import normalize_model_catalog, normalize_profile_catalog
 from .hardware import detect_inventory
 
 CONFIG_FILE = Path("config.yaml")
@@ -61,6 +62,23 @@ def default_cluster_config() -> dict[str, Any]:
             "host": "",
             "path_prefix": "/",
             "tls_secret_name": "",
+        },
+    }
+
+
+def default_resource_profiles() -> dict[str, Any]:
+    return {
+        "gpu-single-default": {
+            "limits": {"nvidia.com/gpu": 1},
+            "requests": {"nvidia.com/gpu": 1},
+        },
+        "gpu-tp2-balanced": {
+            "limits": {"nvidia.com/gpu": 2},
+            "requests": {"nvidia.com/gpu": 2},
+        },
+        "gpu-tp2-maxctx": {
+            "limits": {"nvidia.com/gpu": 2},
+            "requests": {"nvidia.com/gpu": 2},
         },
     }
 
@@ -124,6 +142,17 @@ def merged_catalogs(root: Path, config: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def normalized_catalogs(root: Path, config: dict[str, Any]) -> dict[str, Any]:
+    catalogs = merged_catalogs(root, config)
+    models = normalize_model_catalog(catalogs.get("models", {}))
+    raw_profiles = {**catalogs.get("profiles", {}), **deepcopy(config.get("profiles", {}))}
+    profiles = normalize_profile_catalog(raw_profiles, models)
+    return {
+        "models": models,
+        "profiles": profiles,
+    }
+
+
 def initial_config() -> dict[str, Any]:
     inventory = detect_inventory()
     default_profile = "qwen-mixed" if inventory.get("gpu_count", 0) >= 4 else "workstation-safe"
@@ -152,6 +181,6 @@ def initial_config() -> dict[str, Any]:
         "images": deepcopy(PINNED_IMAGES),
         "state": default_state_paths(),
         "cluster": default_cluster_config(),
-        "resource_profiles": {},
+        "resource_profiles": default_resource_profiles(),
         "profiles": {},
     }

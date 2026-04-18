@@ -35,6 +35,15 @@ def validate_resolved(resolved: dict[str, Any]) -> dict[str, Any]:
             errors.append(f"duplicate service name: {svc['service_name']}")
         seen_service_names.add(svc["service_name"])
 
+        if not svc.get("profile_public_name"):
+            errors.append(f"service {svc['service_name']} is missing profile_public_name")
+        if not svc.get("logical_model_name"):
+            errors.append(f"service {svc['service_name']} is missing logical_model_name")
+        if not svc.get("served_model_name"):
+            errors.append(f"service {svc['service_name']} is missing served_model_name")
+        if not svc.get("protocol_mode"):
+            errors.append(f"service {svc['service_name']} is missing protocol_mode")
+
         if svc.get("placement_error"):
             errors.append(f"service {svc['service_name']} placement failed: {svc['placement_error']}")
         gpu_indices = svc.get("gpu_indices", [])
