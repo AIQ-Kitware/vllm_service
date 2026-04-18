@@ -28,3 +28,12 @@ If you are not using ingress yet, port-forward first:
 ```bash
 kubectl -n kubeai port-forward svc/kubeai 8000:80
 ```
+
+Or, from repo root:
+
+```bash
+make example-single-node
+make bootstrap-k3s
+python manage.py render
+python manage.py deploy
+```

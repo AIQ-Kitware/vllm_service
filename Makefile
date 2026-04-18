@@ -26,3 +26,9 @@ bootstrap-k3s:
 
 install-kubeai:
 	bash scripts/install_kubeai.sh generated/kubeai/kubeai-values.yaml kubeai
+
+bootstrap-single-node: example-single-node bootstrap-k3s
+	@echo "Single-node example copied and K3s bootstrapped. Next: python manage.py render && python manage.py deploy"
+
+port-forward-kubeai:
+	kubectl -n kubeai port-forward svc/kubeai 8000:80

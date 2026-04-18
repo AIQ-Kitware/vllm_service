@@ -85,3 +85,15 @@ python manage.py list-profiles
 - `up` and `down` only apply to the Compose backend
 - `deploy` for KubeAI applies the namespace, installs or upgrades the Helm chart, and applies the rendered `Model` objects
 - the single-node example uses real Qwen2.5 model ids as defaults; adjust them if you want different variants
+
+
+## Convenience targets
+
+```bash
+make example-single-node
+make bootstrap-k3s
+python manage.py render
+python manage.py deploy
+make port-forward-kubeai
+python manage.py smoke-test --base-url http://127.0.0.1:8000/openai/v1
+```
