@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -61,8 +63,131 @@ def plan_path() -> Path:
 def load_config() -> dict[str, Any]:
     path = config_path()
     if not path.exists():
-        raise SystemExit("No config.yaml found. Run `python manage.py init` first.")
+        raise SystemExit(
+            "No config.yaml found. Run `python manage.py setup --backend compose --profile gpt-oss-20b-chat` first."
+        )
     return load_yaml(path)
+
+
+def _env_text(name: str) -> str | None:
+    value = os.environ.get(name)
+    if value is None:
+        return None
+    text = value.strip()
+    return text or None
+
+
+def _env_bool(name: str) -> bool | None:
+    value = _env_text(name)
+    if value is None:
+        return None
+    lowered = value.lower()
+    if lowered in {"1", "true", "yes", "on", "enabled"}:
+        return True
+    if lowered in {"0", "false", "no", "off", "disabled"}:
+        return False
+    raise SystemExit(f"Invalid boolean value for {name}: {value!r}")
+
+
+def _env_int(name: str) -> int | None:
+    value = _env_text(name)
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except ValueError as ex:
+        raise SystemExit(f"Invalid integer value for {name}: {value!r}") from ex
+
+
+def _arg_or_env(args: argparse.Namespace, attr: str, env_name: str, *, caster=None):
+    if hasattr(args, attr):
+        value = getattr(args, attr)
+        if value is not None:
+            return value
+    env_value = _env_text(env_name)
+    if env_value is None:
+        return None
+    if caster is None:
+        return env_value
+    try:
+        return caster(env_value)
+    except ValueError as ex:
+        raise SystemExit(f"Invalid value for {env_name}: {env_value!r}") from ex
+
+
+def _configured_state_paths(state_root: str) -> dict[str, str]:
+    base = Path(state_root)
+    return {
+        "hf_cache": str(base / "hf-cache"),
+        "open_webui": str(base / "open-webui"),
+        "postgres": str(base / "postgres"),
+        "runtime": str(base / "runtime"),
+    }
+
+
+def apply_config_overrides(cfg: dict[str, Any], args: argparse.Namespace | None) -> dict[str, Any]:
+    if args is None:
+        return deepcopy(cfg)
+    out = deepcopy(cfg)
+    out.setdefault("runtime", {})
+    out.setdefault("ports", {})
+    out.setdefault("state", {})
+    out.setdefault("cluster", {})
+    out["cluster"].setdefault("ingress", {})
+
+    backend = _arg_or_env(args, "backend", "VLLM_SERVICE_BACKEND")
+    if backend:
+        out["backend"] = backend
+
+    profile = _arg_or_env(args, "profile", "VLLM_SERVICE_PROFILE")
+    if profile:
+        out["active_profile"] = profile
+
+    compose_cmd = _arg_or_env(args, "compose_cmd", "VLLM_SERVICE_COMPOSE_CMD")
+    if compose_cmd:
+        out["runtime"]["compose_cmd"] = compose_cmd
+
+    litellm_port = getattr(args, "litellm_port", None)
+    if litellm_port is None:
+        litellm_port = _env_int("VLLM_SERVICE_LITELLM_PORT")
+    if litellm_port is not None:
+        out["ports"]["litellm"] = litellm_port
+
+    open_webui_port = getattr(args, "open_webui_port", None)
+    if open_webui_port is None:
+        open_webui_port = _env_int("VLLM_SERVICE_OPEN_WEBUI_PORT")
+    if open_webui_port is not None:
+        out["ports"]["open_webui"] = open_webui_port
+
+    postgres_port = getattr(args, "postgres_port", None)
+    if postgres_port is None:
+        postgres_port = _env_int("VLLM_SERVICE_POSTGRES_PORT")
+    if postgres_port is not None:
+        out["ports"]["postgres"] = postgres_port
+
+    state_root = _arg_or_env(args, "state_root", "VLLM_SERVICE_STATE_ROOT")
+    if state_root:
+        out["state"].update(_configured_state_paths(state_root))
+
+    runtime_dir = _arg_or_env(args, "runtime_dir", "VLLM_SERVICE_RUNTIME_DIR")
+    if runtime_dir:
+        out["state"]["runtime"] = runtime_dir
+
+    namespace = _arg_or_env(args, "namespace", "VLLM_SERVICE_NAMESPACE")
+    if namespace:
+        out["cluster"]["namespace"] = namespace
+
+    ingress_host = _arg_or_env(args, "ingress_host", "VLLM_SERVICE_INGRESS_HOST")
+    if ingress_host:
+        out["cluster"]["ingress"]["host"] = ingress_host
+
+    ingress_enabled = getattr(args, "ingress_enabled", None)
+    if ingress_enabled is None:
+        ingress_enabled = _env_bool("VLLM_SERVICE_INGRESS_ENABLED")
+    if ingress_enabled is not None:
+        out["cluster"]["ingress"]["enabled"] = bool(ingress_enabled)
+
+    return out
 
 
 def runtime_dir_for_config(cfg: dict[str, Any]) -> Path:
@@ -99,6 +224,49 @@ def effective_inventory(args: argparse.Namespace | None) -> dict[str, Any] | Non
 
 def backend_name(cfg: dict[str, Any]) -> str:
     return str(cfg.get("backend", "compose")).lower()
+
+
+def config_for_runtime(args: argparse.Namespace | None, *, allow_missing: bool = False) -> dict[str, Any]:
+    if config_path().exists():
+        cfg = load_yaml(config_path())
+    elif allow_missing:
+        cfg = initial_config()
+    else:
+        raise SystemExit(
+            "No config.yaml found. Run `python manage.py setup --backend compose --profile gpt-oss-20b-chat` first."
+        )
+    return apply_config_overrides(cfg, args)
+
+
+def has_runtime_overrides(args: argparse.Namespace | None) -> bool:
+    if args is None:
+        return False
+    attrs = [
+        "profile",
+        "backend",
+        "compose_cmd",
+        "litellm_port",
+        "open_webui_port",
+        "postgres_port",
+        "namespace",
+        "ingress_host",
+        "ingress_enabled",
+        "simulate_hardware",
+    ]
+    if any(hasattr(args, attr) and getattr(args, attr) is not None for attr in attrs):
+        return True
+    env_names = [
+        "VLLM_SERVICE_BACKEND",
+        "VLLM_SERVICE_PROFILE",
+        "VLLM_SERVICE_COMPOSE_CMD",
+        "VLLM_SERVICE_LITELLM_PORT",
+        "VLLM_SERVICE_OPEN_WEBUI_PORT",
+        "VLLM_SERVICE_POSTGRES_PORT",
+        "VLLM_SERVICE_NAMESPACE",
+        "VLLM_SERVICE_INGRESS_HOST",
+        "VLLM_SERVICE_INGRESS_ENABLED",
+    ]
+    return any(_env_text(name) is not None for name in env_names)
 
 
 def build_plan(
@@ -178,8 +346,26 @@ def cmd_init(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_setup(args: argparse.Namespace) -> int:
+    cfg_path = config_path()
+    if cfg_path.exists() and not args.reset:
+        cfg = load_yaml(cfg_path)
+    else:
+        cfg = initial_config()
+    cfg = apply_config_overrides(cfg, args)
+    save_yaml(cfg_path, cfg)
+    if not models_path().exists():
+        save_yaml(models_path(), {"models": {}, "profiles": {}})
+    print(f"Wrote {cfg_path}")
+    print(
+        f"Configured backend={cfg.get('backend', 'compose')} "
+        f"active_profile={cfg.get('active_profile', '') or '<unset>'}"
+    )
+    return 0
+
+
 def cmd_resolve(args: argparse.Namespace) -> int:
-    cfg = load_config()
+    cfg = config_for_runtime(args)
     plan = build_plan(
         cfg,
         profile_name=args.profile,
@@ -192,7 +378,7 @@ def cmd_resolve(args: argparse.Namespace) -> int:
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
-    cfg = load_config()
+    cfg = config_for_runtime(args)
     plan = build_plan(
         cfg,
         profile_name=getattr(args, "profile", None),
@@ -205,7 +391,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
 
 def cmd_lock(args: argparse.Namespace) -> int:
-    cfg = load_config()
+    cfg = config_for_runtime(args)
     plan = build_plan(
         cfg,
         profile_name=getattr(args, "profile", None),
@@ -222,7 +408,7 @@ def cmd_lock(args: argparse.Namespace) -> int:
 
 
 def cmd_render(args: argparse.Namespace) -> int:
-    cfg = load_config()
+    cfg = config_for_runtime(args)
     plan = build_plan(
         cfg,
         profile_name=getattr(args, "profile", None),
@@ -242,11 +428,21 @@ def cmd_render(args: argparse.Namespace) -> int:
 
 
 def cmd_up(args: argparse.Namespace) -> int:
-    cfg = load_config()
+    cfg = config_for_runtime(args)
     if backend_name(cfg) != "compose":
         raise SystemExit("`up` only supports the compose backend. Use `deploy` for kubeai.")
-    if render_is_stale(cfg):
-        render_args = argparse.Namespace(profile=None, allow_unsupported=effective_allow_unsupported(args, cfg), simulate_hardware=None)
+    if has_runtime_overrides(args) or render_is_stale(cfg):
+        render_args = argparse.Namespace(
+            profile=getattr(args, "profile", None),
+            backend=getattr(args, "backend", None),
+            compose_cmd=getattr(args, "compose_cmd", None),
+            litellm_port=getattr(args, "litellm_port", None),
+            namespace=getattr(args, "namespace", None),
+            ingress_host=getattr(args, "ingress_host", None),
+            ingress_enabled=getattr(args, "ingress_enabled", None),
+            allow_unsupported=effective_allow_unsupported(args, cfg),
+            simulate_hardware=getattr(args, "simulate_hardware", None),
+        )
         cmd_render(render_args)
     compose_up(
         cfg["runtime"]["compose_cmd"],
@@ -259,7 +455,7 @@ def cmd_up(args: argparse.Namespace) -> int:
 
 
 def cmd_down(args: argparse.Namespace) -> int:
-    cfg = load_config()
+    cfg = config_for_runtime(args)
     if backend_name(cfg) != "compose":
         raise SystemExit("`down` only supports the compose backend.")
     compose_down(cfg["runtime"]["compose_cmd"], generated_dir() / "docker-compose.yml", runtime_env_path(cfg))
@@ -267,7 +463,7 @@ def cmd_down(args: argparse.Namespace) -> int:
 
 
 def cmd_switch(args: argparse.Namespace) -> int:
-    cfg = load_config()
+    cfg = config_for_runtime(args)
     cfg["active_profile"] = args.profile
     save_yaml(config_path(), cfg)
     plan = build_plan(
@@ -355,14 +551,14 @@ def cmd_describe_profile(args: argparse.Namespace) -> int:
     contract = load_profile_contract(
         args.profile,
         root=root_dir(),
-        backend=getattr(args, "backend", None),
+        backend=_arg_or_env(args, "backend", "VLLM_SERVICE_BACKEND"),
         simulate_hardware_spec=getattr(args, "simulate_hardware", None),
     )
     return _print_structured(contract, args.format, args.output)
 
 
 def _cmd_export_bundle(args: argparse.Namespace) -> int:
-    cfg = load_config()
+    cfg = config_for_runtime(args)
     plan = build_plan(
         cfg,
         profile_name=args.profile,
@@ -394,7 +590,7 @@ def cmd_export_helm_bundle(args: argparse.Namespace) -> int:
 
 
 def cmd_verify_profile(args: argparse.Namespace) -> int:
-    cfg = load_config()
+    cfg = config_for_runtime(args)
     plan = build_plan(
         cfg,
         profile_name=args.profile,
@@ -408,7 +604,7 @@ def cmd_verify_profile(args: argparse.Namespace) -> int:
 
 def cmd_benchmark(args: argparse.Namespace) -> int:
     prompts = json.loads((root_dir() / "benchmark_prompts.json").read_text(encoding="utf-8"))
-    cfg = load_config()
+    cfg = config_for_runtime(args)
     env = parse_env_file(runtime_env_path(cfg))
     base_url = args.base_url or f"http://127.0.0.1:{cfg['ports']['litellm']}/v1"
     api_key = args.api_key or env.get("LITELLM_MASTER_KEY", "")
@@ -418,9 +614,19 @@ def cmd_benchmark(args: argparse.Namespace) -> int:
 
 
 def cmd_deploy(args: argparse.Namespace) -> int:
-    cfg = load_config()
-    if render_is_stale(cfg):
-        render_args = argparse.Namespace(profile=None, allow_unsupported=effective_allow_unsupported(args, cfg), simulate_hardware=None)
+    cfg = config_for_runtime(args)
+    if has_runtime_overrides(args) or render_is_stale(cfg):
+        render_args = argparse.Namespace(
+            profile=getattr(args, "profile", None),
+            backend=getattr(args, "backend", None),
+            compose_cmd=getattr(args, "compose_cmd", None),
+            litellm_port=getattr(args, "litellm_port", None),
+            namespace=getattr(args, "namespace", None),
+            ingress_host=getattr(args, "ingress_host", None),
+            ingress_enabled=getattr(args, "ingress_enabled", None),
+            allow_unsupported=effective_allow_unsupported(args, cfg),
+            simulate_hardware=getattr(args, "simulate_hardware", None),
+        )
         cmd_render(render_args)
     if backend_name(cfg) == "kubeai":
         plan = load_yaml(plan_path())
@@ -437,7 +643,7 @@ def cmd_deploy(args: argparse.Namespace) -> int:
 
 
 def cmd_status(args: argparse.Namespace) -> int:
-    cfg = load_config()
+    cfg = config_for_runtime(args)
     if backend_name(cfg) == "kubeai":
         namespace = cfg.get("cluster", {}).get("namespace", "kubeai")
         kubeai_print_status(namespace)
@@ -452,7 +658,7 @@ def _infer_default_base_url(cfg: dict[str, Any], args: argparse.Namespace) -> st
 
 
 def cmd_smoke_test(args: argparse.Namespace) -> int:
-    cfg = load_config()
+    cfg = config_for_runtime(args)
     env = parse_env_file(runtime_env_path(cfg)) if backend_name(cfg) == "compose" else {}
     base_url = _infer_default_base_url(cfg, args)
     headers = {"Content-Type": "application/json"}
@@ -480,11 +686,55 @@ def cmd_smoke_test(args: argparse.Namespace) -> int:
     return 0
 
 
+def add_override_args(
+    parser: argparse.ArgumentParser,
+    *,
+    include_profile: bool = False,
+    include_backend: bool = True,
+    include_compose: bool = False,
+    include_ports: bool = False,
+    include_cluster: bool = False,
+    include_state: bool = False,
+) -> None:
+    if include_profile:
+        parser.add_argument("--profile", default=None)
+    if include_backend:
+        parser.add_argument("--backend", choices=["compose", "kubeai"], default=None)
+    if include_compose:
+        parser.add_argument("--compose-cmd", default=None)
+    if include_ports:
+        parser.add_argument("--litellm-port", type=int, default=None)
+        parser.add_argument("--open-webui-port", type=int, default=None)
+        parser.add_argument("--postgres-port", type=int, default=None)
+    if include_state:
+        parser.add_argument("--state-root", default=None)
+        parser.add_argument("--runtime-dir", default=None)
+    if include_cluster:
+        parser.add_argument("--namespace", default=None)
+        parser.add_argument("--ingress-host", default=None)
+        parser.add_argument("--ingress", dest="ingress_enabled", action="store_true")
+        parser.add_argument("--no-ingress", dest="ingress_enabled", action="store_false")
+        parser.set_defaults(ingress_enabled=None)
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        description="Primary workflow: init -> edit config.yaml -> render -> deploy. Compose and KubeAI backends are both supported."
+        description="Manage named serving profiles for local Compose and Kubernetes-backed KubeAI serving."
     )
     sub = p.add_subparsers(dest="cmd", required=True)
+
+    s = sub.add_parser("setup")
+    add_override_args(
+        s,
+        include_profile=True,
+        include_backend=True,
+        include_compose=True,
+        include_ports=True,
+        include_cluster=True,
+        include_state=True,
+    )
+    s.add_argument("--reset", action="store_true", help="Start from default config values before applying overrides.")
+    s.set_defaults(func=cmd_setup)
 
     s = sub.add_parser("init")
     s.add_argument("--force", action="store_true")
@@ -492,21 +742,25 @@ def build_parser() -> argparse.ArgumentParser:
 
     for name, func in [("resolve", cmd_resolve), ("validate", cmd_validate), ("lock", cmd_lock), ("render", cmd_render)]:
         s = sub.add_parser(name)
-        s.add_argument("--profile", default=None)
+        add_override_args(s, include_profile=True, include_backend=True, include_compose=True, include_ports=True, include_cluster=True)
         s.add_argument("--allow-unsupported", action="store_true")
         s.add_argument("--simulate-hardware", default=None, metavar="NxM", help="Simulate N GPUs with M GiB each (e.g. 4x96, 2x80).")
         s.set_defaults(func=func)
 
     s = sub.add_parser("up")
+    add_override_args(s, include_profile=True, include_backend=True, include_compose=True, include_ports=True, include_cluster=True)
     s.add_argument("--allow-unsupported", action="store_true")
+    s.add_argument("--simulate-hardware", default=None, metavar="NxM", help="Simulate N GPUs with M GiB each (e.g. 4x96, 2x80).")
     s.add_argument("-d", "--detach", action="store_true", help="Run in background instead of attaching to logs")
     s.set_defaults(func=cmd_up)
 
     s = sub.add_parser("down")
+    add_override_args(s, include_backend=True, include_compose=True, include_ports=True)
     s.set_defaults(func=cmd_down)
 
     s = sub.add_parser("switch")
     s.add_argument("profile")
+    add_override_args(s, include_backend=True, include_compose=True, include_ports=True, include_cluster=True)
     s.add_argument("--apply", action="store_true")
     s.add_argument("--allow-unsupported", action="store_true")
     s.add_argument("--simulate-hardware", default=None, metavar="NxM", help="Simulate N GPUs with M GiB each (e.g. 4x96, 2x80).")
@@ -524,6 +778,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("describe-profile")
     s.add_argument("profile")
+    add_override_args(s, include_backend=True)
     s.add_argument("--format", choices=["json", "yaml"], default="yaml")
     s.add_argument("--output", default=None)
     s.add_argument("--allow-unsupported", action="store_true")
@@ -532,6 +787,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("export-benchmark-bundle")
     s.add_argument("profile")
+    add_override_args(s, include_backend=True, include_compose=True, include_ports=True, include_cluster=True)
     s.add_argument("--base-url", default=None)
     s.add_argument("--output-dir", default=None)
     s.add_argument("--allow-unsupported", action="store_true")
@@ -540,6 +796,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("export-helm-bundle")
     s.add_argument("profile")
+    add_override_args(s, include_backend=True, include_compose=True, include_ports=True, include_cluster=True)
     s.add_argument("--base-url", default=None)
     s.add_argument("--output-dir", default=None)
     s.add_argument("--allow-unsupported", action="store_true")
@@ -548,25 +805,31 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("verify-profile")
     s.add_argument("profile")
+    add_override_args(s, include_backend=True, include_compose=True, include_ports=True, include_cluster=True)
     s.add_argument("--allow-unsupported", action="store_true")
     s.add_argument("--simulate-hardware", default=None, metavar="NxM", help="Simulate N GPUs with M GiB each (e.g. 4x96, 2x80).")
     s.set_defaults(func=cmd_verify_profile)
 
     s = sub.add_parser("benchmark")
     s.add_argument("--model", required=True)
+    add_override_args(s, include_backend=True, include_compose=True, include_ports=True)
     s.add_argument("--base-url", default=None)
     s.add_argument("--api-key", default=None)
     s.set_defaults(func=cmd_benchmark)
 
     s = sub.add_parser("deploy")
+    add_override_args(s, include_profile=True, include_backend=True, include_compose=True, include_ports=True, include_cluster=True)
     s.add_argument("-d", "--detach", action="store_true")
     s.add_argument("--allow-unsupported", action="store_true")
+    s.add_argument("--simulate-hardware", default=None, metavar="NxM", help="Simulate N GPUs with M GiB each (e.g. 4x96, 2x80).")
     s.set_defaults(func=cmd_deploy)
 
     s = sub.add_parser("status")
+    add_override_args(s, include_backend=True, include_compose=True, include_ports=True, include_cluster=True)
     s.set_defaults(func=cmd_status)
 
     s = sub.add_parser("smoke-test")
+    add_override_args(s, include_backend=True, include_ports=True, include_cluster=True)
     s.add_argument("--base-url", default=None)
     s.add_argument("--api-key", default=None)
     s.add_argument("--model", default=None)

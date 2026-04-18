@@ -44,3 +44,22 @@ Design takeaways:
 1. A public contract is easier to keep stable when the same module also owns the canonical way to construct it.
 2. Auth expectations are part of an access surface; benchmark client mapping is not.
 3. When a lower-level repo exports a machine-readable contract, the highest-value public API is often a single “load and resolve this profile for me” function rather than a larger façade.
+
+## 2026-04-18 22:26:38 +0000
+
+Summary of user intent: do a narrow UX pass so a new user can follow the README and get either the Compose or KubeAI backend running without manually editing `config.yaml` or `models.yaml`, favoring one first-class setup command with flags and environment fallbacks.
+
+Model and configuration: Codex (GPT-5-based coding agent), default in-session configuration.
+
+This pass was mostly about making the CLI tell a more honest story. The repo had already outgrown the old “`init`, then edit YAML” posture, but the main branch UX still forced people back into it because the first real command that needed config would stop with “No config.yaml found.” The cleanest fix was not to make every command invent config on the fly, but to add a single `setup` command that writes or updates `config.yaml` from explicit flags or environment variables, then keep the common commands capable of taking a few important overrides without making users open files. That gives us one clear first-run habit while still keeping the config file as an inspectable artifact instead of hidden process state.
+
+I chose to keep the override surface deliberately narrow and practical. `setup` accepts backend, active profile, compose command, ports, state/runtime paths, namespace, and ingress settings, with matching environment-variable fallbacks. Then `render`, `deploy`, `up`, `status`, `switch`, `smoke-test`, and the profile-inspection commands accept the most useful transient overrides such as backend, profile, namespace, ingress host, and compose command. The main tradeoff here is that not every config field became a flag, but that felt right for this stage of the repo. The goal was not to build a universal config editor; it was to make the common path copy/paste-safe and easy to explain later.
+
+The subtle bug I had to guard against was stale renders under overrides. Once `deploy --backend kubeai --profile ...` becomes supported, a previously rendered Compose plan can look “fresh” even though it is for the wrong backend and profile. I fixed that by treating runtime overrides as a reason to re-render before `up` or `deploy`. That keeps the new override path trustworthy without changing the underlying plan/render structure. I also rewrote the README flows around `setup` and smaller chat-oriented examples for Compose so the built-in smoke test and direct curl commands align with the default request path instead of dropping users into a chat-vs-completions nuance immediately.
+
+I’m confident in the new setup story because the added tests exercise it as a real CLI flow from an empty temp directory: `setup`, `render`, and backend-specific artifact generation, plus environment-variable fallback and transient backend/profile override behavior without persisting those overrides into the saved config. Remaining debt is mostly polish: `init` still exists as a compatibility command, and there are still many lower-signal config fields that are only file-driven. That is acceptable for now because the README no longer needs them for the happy path.
+
+Design takeaways:
+1. A copy/paste-safe setup flow is usually better served by one explicit config-writing command than by trying to make every command silently bootstrap state.
+2. Allowing transient overrides is only safe if apply-style commands treat those overrides as invalidating prior renders.
+3. README examples become much more trustworthy when they use profiles that naturally match the default smoke-test path instead of forcing special cases into the first-run experience.

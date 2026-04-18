@@ -30,7 +30,7 @@ Each profile resolves to a concrete serving plan.
 ## Main commands
 
 ```bash id="jv5tgf"
-python manage.py init
+python manage.py setup --backend compose --profile qwen2-5-7b-instruct-turbo-default
 python manage.py list-profiles
 python manage.py describe-profile <profile>
 python manage.py render --profile <profile>
@@ -72,13 +72,15 @@ Use the Compose backend when you want the simplest local path on one machine.
 
 ### Getting started
 
-Initialize the repo, list profiles, inspect one, render it, and start it:
+Prerequisite: Docker and the `docker compose` plugin must be installed on the local machine.
+
+Choose a profile, write a working config with one command, render it, and start it:
 
 ```bash id="6v6r5x"
-python manage.py init
+python manage.py setup --backend compose --profile qwen2-5-7b-instruct-turbo-default
 python manage.py list-profiles
-python manage.py describe-profile gpt-oss-20b-completions --format yaml
-python manage.py render --profile gpt-oss-20b-completions
+python manage.py describe-profile qwen2-5-7b-instruct-turbo-default --format yaml
+python manage.py render
 python manage.py up -d
 ```
 
@@ -117,7 +119,7 @@ Send a request:
 curl http://127.0.0.1:14000/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{
-    "model": "openai/gpt-oss-20b",
+    "model": "qwen/qwen2.5-7b-instruct-turbo",
     "messages": [{"role": "user", "content": "Say hello in one sentence."}],
     "max_tokens": 64
   }'
@@ -153,15 +155,15 @@ The current repo also includes a K3s bootstrap path, but the backend itself is `
 
 ### Getting started
 
-Start from the same repo, but set the backend to `kubeai` in `config.yaml`, then render and deploy.
+Prerequisite: `kubectl` and Helm must already work against a Kubernetes cluster where KubeAI is installed or installable.
 
-A common flow is:
+Start from the same repo, write a working KubeAI config with one command, then render and deploy:
 
 ```bash id="31n0f7"
-python manage.py init
+python manage.py setup --backend kubeai --profile qwen2-72b-instruct-tp2-balanced --namespace kubeai
 python manage.py list-profiles
 python manage.py describe-profile qwen2-72b-instruct-tp2-balanced --format yaml
-python manage.py render --profile qwen2-72b-instruct-tp2-balanced
+python manage.py render
 python manage.py deploy
 python manage.py status
 ```
@@ -214,7 +216,7 @@ curl http://127.0.0.1:8000/openai/v1/chat/completions \
 You can change the active serving profile and apply it through the backend:
 
 ```bash id="gdsq2p"
-python manage.py switch gpt-oss-20b-completions --apply
+python manage.py switch gpt-oss-20b-chat --apply
 python manage.py status
 ```
 
@@ -257,6 +259,24 @@ The normal learning path is:
 * `generated/plan.yaml`
 * `generated/docker-compose.yml`
 * `generated/kubeai/models.yaml`
+
+## Environment variable fallbacks
+
+The `setup` command is the recommended first-run path, but the same common settings can also come from environment variables when that is easier for local automation.
+
+Recognized variables include:
+
+* `VLLM_SERVICE_BACKEND`
+* `VLLM_SERVICE_PROFILE`
+* `VLLM_SERVICE_COMPOSE_CMD`
+* `VLLM_SERVICE_LITELLM_PORT`
+* `VLLM_SERVICE_OPEN_WEBUI_PORT`
+* `VLLM_SERVICE_POSTGRES_PORT`
+* `VLLM_SERVICE_STATE_ROOT`
+* `VLLM_SERVICE_RUNTIME_DIR`
+* `VLLM_SERVICE_NAMESPACE`
+* `VLLM_SERVICE_INGRESS_ENABLED`
+* `VLLM_SERVICE_INGRESS_HOST`
 
 ---
 
