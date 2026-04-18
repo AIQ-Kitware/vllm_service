@@ -7,6 +7,11 @@ import yaml
 
 from .profile_runtime import default_base_url, export_transport_config
 
+# Transitional compatibility layer:
+# benchmark bundle ownership now lives in helm_audit. Keep this exporter only to
+# avoid breaking near-term operator workflows while the audit-side integration
+# becomes the primary path.
+
 
 def benchmark_bundle_dir(root: Path, profile_name: str) -> Path:
     return root / "generated" / "benchmark" / profile_name

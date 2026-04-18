@@ -21,6 +21,7 @@ from .config import (
     normalized_catalogs,
     save_yaml,
 )
+from .contracts import build_profile_contract
 from .docker_utils import compose_down, compose_up
 from .env_utils import parse_env_file
 from .exporters import export_benchmark_bundle
@@ -333,6 +334,36 @@ def cmd_explain(args: argparse.Namespace) -> int:
     return 0
 
 
+def _print_structured(data: dict[str, Any], fmt: str, output: str | None) -> int:
+    if fmt == "yaml":
+        import yaml
+
+        text = yaml.safe_dump(data, sort_keys=False)
+    else:
+        text = json.dumps(data, indent=2)
+    if output:
+        target = Path(output)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text + ("" if text.endswith("\n") else "\n"), encoding="utf-8")
+        print(f"Wrote {target}")
+        return 0
+    print(text)
+    return 0
+
+
+def cmd_describe_profile(args: argparse.Namespace) -> int:
+    cfg = load_config()
+    plan = build_plan(
+        cfg,
+        profile_name=args.profile,
+        allow_unsupported=effective_allow_unsupported(args, cfg),
+        inventory=effective_inventory(args),
+    )
+    ensure_renderable(plan)
+    contract = build_profile_contract(plan["deployment"])
+    return _print_structured(contract, args.format, args.output)
+
+
 def _cmd_export_bundle(args: argparse.Namespace) -> int:
     cfg = load_config()
     plan = build_plan(
@@ -342,6 +373,10 @@ def _cmd_export_bundle(args: argparse.Namespace) -> int:
         inventory=effective_inventory(args),
     )
     ensure_renderable(plan)
+    print(
+        "Benchmark bundle export here is transitional; prefer the helm_audit "
+        "integration layer for CRFM HELM bundle generation."
+    )
     result = export_benchmark_bundle(
         root_dir(),
         plan["deployment"],
@@ -489,6 +524,14 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("explain")
     s.add_argument("--file", default=None)
     s.set_defaults(func=cmd_explain)
+
+    s = sub.add_parser("describe-profile")
+    s.add_argument("profile")
+    s.add_argument("--format", choices=["json", "yaml"], default="yaml")
+    s.add_argument("--output", default=None)
+    s.add_argument("--allow-unsupported", action="store_true")
+    s.add_argument("--simulate-hardware", default=None, metavar="NxM", help="Simulate N GPUs with M GiB each (e.g. 4x96, 2x80).")
+    s.set_defaults(func=cmd_describe_profile)
 
     s = sub.add_parser("export-benchmark-bundle")
     s.add_argument("profile")
