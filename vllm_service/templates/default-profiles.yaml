@@ -368,6 +368,11 @@ profiles:
       tp: 2
       dp: 1
     tags: [audit, helm, qwen]
+    transport:
+      kind: vllm-direct
+      deployment_name: vllm/qwen2-72b-instruct-local
+      request_model_name: Qwen/Qwen2-72B-Instruct
+      base_url: http://localhost:8000/v1
     audit_notes:
       - Preserve the HELM logical model identity while serving locally through a named profile.
     vllm:
@@ -386,6 +391,11 @@ profiles:
       strategy: first_fit
       gpu_count: 1
     tags: [audit, helm, qwen]
+    transport:
+      kind: vllm-direct
+      deployment_name: vllm/qwen2-5-7b-instruct-turbo-local
+      request_model_name: Qwen/Qwen2.5-7B-Instruct
+      base_url: http://localhost:8000/v1
     vllm:
       enable_responses_api_store: false
       logging_level: INFO
@@ -405,6 +415,11 @@ profiles:
       tp: 2
       dp: 1
     tags: [audit, helm, qwen]
+    transport:
+      kind: vllm-direct
+      deployment_name: vllm/qwen2-5-72b-instruct-turbo-local
+      request_model_name: Qwen/Qwen2.5-72B-Instruct
+      base_url: http://localhost:8000/v1
     vllm:
       enable_responses_api_store: false
       logging_level: INFO
@@ -466,6 +481,13 @@ profiles:
       strategy: first_fit
       gpu_count: 1
     tags: [audit, helm, gpt-oss, chat]
+    transport:
+      kind: openai-compatible
+      deployment_name: litellm/gpt-oss-20b-chat-local
+      request_model_name: openai/gpt-oss-20b
+      api_key_env: LITELLM_MASTER_KEY
+      api_key_placeholder: SET_LITELLM_MASTER_KEY_IN_RUNTIME_BUNDLE
+      base_url: http://localhost:14000/v1
     audit_notes:
       - Exported HELM bundles should use a chat-capable client class for this profile.
     vllm:
@@ -484,6 +506,13 @@ profiles:
       strategy: first_fit
       gpu_count: 1
     tags: [audit, helm, gpt-oss, completions]
+    transport:
+      kind: openai-compatible
+      deployment_name: litellm/gpt-oss-20b-local
+      request_model_name: openai/gpt-oss-20b
+      api_key_env: LITELLM_MASTER_KEY
+      api_key_placeholder: SET_LITELLM_MASTER_KEY_IN_RUNTIME_BUNDLE
+      base_url: http://localhost:14000/v1
     audit_notes:
       - Exported HELM bundles should use a completions-capable client class for this profile.
     vllm:

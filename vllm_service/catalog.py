@@ -8,7 +8,7 @@ PROFILE_NAME_ALIASES = {
     "helm-qwen2-72b-instruct": "qwen2-72b-instruct-tp2-balanced",
     "helm-qwen2.5-7b-instruct": "qwen2-5-7b-instruct-turbo-default",
     "helm-qwen2.5-72b-instruct": "qwen2-5-72b-instruct-tp2-balanced",
-    "helm-gpt-oss-20b": "gpt-oss-20b-chat",
+    "helm-gpt-oss-20b": "gpt-oss-20b-completions",
     "helm-vicuna-7b-v1.3": "vicuna-7b-v1-3-no-chat-template",
 }
 
