@@ -33,7 +33,7 @@ Each profile resolves to a concrete serving plan.
 python manage.py setup --backend compose --profile qwen2-5-7b-instruct-turbo-default
 python manage.py list-profiles
 python manage.py describe-profile <profile>
-python manage.py render --profile <profile>
+python manage.py render
 python manage.py up -d
 python manage.py deploy
 python manage.py switch <profile> --apply
@@ -46,7 +46,7 @@ python manage.py smoke-test
 This is the best way to understand what a profile will do:
 
 ```bash id="ecl6n7"
-python manage.py describe-profile qwen2-72b-instruct-tp2-balanced --format yaml
+python manage.py describe-profile qwen2-5-7b-instruct-turbo-default --format yaml
 ```
 
 That command prints the resolved serving contract for the profile, including model identity, access shape, placement, and runtime settings.  
@@ -157,12 +157,12 @@ The current repo also includes a K3s bootstrap path, but the backend itself is `
 
 Prerequisite: `kubectl` and Helm must already work against a Kubernetes cluster where KubeAI is installed or installable.
 
-Start from the same repo, write a working KubeAI config with one command, then render and deploy:
+Use a smaller first-run profile unless you already know the cluster can fit something larger. Start from the same repo, write a working KubeAI config with one command, then render and deploy:
 
 ```bash id="31n0f7"
-python manage.py setup --backend kubeai --profile qwen2-72b-instruct-tp2-balanced --namespace kubeai
+python manage.py setup --backend kubeai --profile qwen2-5-7b-instruct-turbo-default --namespace kubeai
 python manage.py list-profiles
-python manage.py describe-profile qwen2-72b-instruct-tp2-balanced --format yaml
+python manage.py describe-profile qwen2-5-7b-instruct-turbo-default --format yaml
 python manage.py render
 python manage.py deploy
 python manage.py status
@@ -205,7 +205,7 @@ Send a request:
 curl http://127.0.0.1:8000/openai/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{
-    "model": "qwen2-72b-instruct-tp2-balanced",
+    "model": "qwen2-5-7b-instruct-turbo-default",
     "messages": [{"role": "user", "content": "Say hello in one sentence."}],
     "max_tokens": 64
   }'

@@ -64,7 +64,7 @@ def load_config() -> dict[str, Any]:
     path = config_path()
     if not path.exists():
         raise SystemExit(
-            "No config.yaml found. Run `python manage.py setup --backend compose --profile gpt-oss-20b-chat` first."
+            "No config.yaml found. Run `python manage.py setup --backend compose --profile qwen2-5-7b-instruct-turbo-default` first."
         )
     return load_yaml(path)
 
@@ -233,7 +233,7 @@ def config_for_runtime(args: argparse.Namespace | None, *, allow_missing: bool =
         cfg = initial_config()
     else:
         raise SystemExit(
-            "No config.yaml found. Run `python manage.py setup --backend compose --profile gpt-oss-20b-chat` first."
+            "No config.yaml found. Run `python manage.py setup --backend compose --profile qwen2-5-7b-instruct-turbo-default` first."
         )
     return apply_config_overrides(cfg, args)
 
@@ -463,9 +463,10 @@ def cmd_down(args: argparse.Namespace) -> int:
 
 
 def cmd_switch(args: argparse.Namespace) -> int:
-    cfg = config_for_runtime(args)
-    cfg["active_profile"] = args.profile
-    save_yaml(config_path(), cfg)
+    persisted_cfg = load_config()
+    persisted_cfg["active_profile"] = args.profile
+    save_yaml(config_path(), persisted_cfg)
+    cfg = apply_config_overrides(persisted_cfg, args)
     plan = build_plan(
         cfg,
         profile_name=args.profile,

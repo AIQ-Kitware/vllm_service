@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import argparse
 import os
 import subprocess
 import sys
 from pathlib import Path
 
 import yaml
+
+from vllm_service import cli as cli_mod
 
 
 MANAGE_PY = Path(__file__).resolve().parents[1] / "manage.py"
@@ -98,3 +101,53 @@ def test_setup_supports_environment_fallbacks(tmp_path: Path) -> None:
     assert cfg["cluster"]["namespace"] == "env-ns"
     assert cfg["cluster"]["ingress"]["enabled"] is True
     assert cfg["cluster"]["ingress"]["host"] == "env.example.test"
+
+
+def test_switch_apply_persists_only_active_profile_and_uses_transient_overrides(
+    tmp_path: Path, monkeypatch
+) -> None:
+    run_cli(
+        tmp_path,
+        "setup",
+        "--backend",
+        "compose",
+        "--profile",
+        "gpt-oss-20b-chat",
+        "--compose-cmd",
+        "docker compose",
+    )
+    monkeypatch.chdir(tmp_path)
+    observed: dict[str, object] = {}
+
+    def fake_deploy_rendered_artifacts(root: Path, deployment: dict) -> None:
+        observed["root"] = root
+        observed["backend"] = deployment["backend"]
+        observed["namespace"] = deployment["cluster"]["namespace"]
+        observed["profile"] = deployment["serving_profile"]["public_name"]
+
+    monkeypatch.setattr(cli_mod, "deploy_rendered_artifacts", fake_deploy_rendered_artifacts)
+    args = argparse.Namespace(
+        profile="qwen2-5-7b-instruct-turbo-default",
+        backend="kubeai",
+        compose_cmd="podman compose",
+        litellm_port=None,
+        open_webui_port=None,
+        postgres_port=None,
+        namespace="override-ns",
+        ingress_host=None,
+        ingress_enabled=None,
+        apply=True,
+        allow_unsupported=False,
+        simulate_hardware="1x96",
+    )
+    cli_mod.cmd_switch(args)
+
+    cfg = yaml.safe_load((tmp_path / "config.yaml").read_text())
+    assert cfg["active_profile"] == "qwen2-5-7b-instruct-turbo-default"
+    assert cfg["backend"] == "compose"
+    assert cfg["runtime"]["compose_cmd"] == "docker compose"
+    assert cfg["cluster"]["namespace"] != "override-ns"
+
+    assert observed["backend"] == "kubeai"
+    assert observed["namespace"] == "override-ns"
+    assert observed["profile"] == "qwen2-5-7b-instruct-turbo-default"

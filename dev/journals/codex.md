@@ -63,3 +63,20 @@ Design takeaways:
 1. A copy/paste-safe setup flow is usually better served by one explicit config-writing command than by trying to make every command silently bootstrap state.
 2. Allowing transient overrides is only safe if apply-style commands treat those overrides as invalidating prior renders.
 3. README examples become much more trustworthy when they use profiles that naturally match the default smoke-test path instead of forcing special cases into the first-run experience.
+
+## 2026-04-18 22:31:21 +0000
+
+Summary of user intent: do a small follow-up UX correctness pass by making `switch` persist only the active profile while keeping one-off overrides transient, and make the KubeAI README path more honest by using a safer first-run example plus cleanup of small setup-first inconsistencies.
+
+Model and configuration: Codex (GPT-5-based coding agent), default in-session configuration.
+
+This pass was narrower than the prior setup work, but it fixed the most important remaining surprise in the new UX. The first setup-first design deliberately allowed transient overrides on common commands, but `switch` was still saving the fully override-expanded runtime config back to disk. That blurred the boundary between “use this override right now” and “persist this setting for future commands,” which is exactly the kind of silent mutation that makes operators distrust a CLI. I changed `switch` so it now loads the saved config, updates only `active_profile`, writes that back, and only then applies runtime overrides in-memory for the immediate build/render/apply step. That keeps `setup` as the general config-writing command and `switch` as the profile-switching command.
+
+The interesting tradeoff was not technical difficulty, but deciding how much behavior to encode into tests. I chose one focused unit-style test around `cmd_switch` rather than more subprocess integration because the point here is semantic correctness: the saved file should keep its original backend, compose command, and namespace, while the invocation can still temporarily render/deploy with an override backend and namespace. That test gives us much better protection against accidental future regressions than another end-to-end happy path would have.
+
+For the README, I took the safer option and changed the KubeAI getting-started flow to a smaller built-in profile, `qwen2-5-7b-instruct-turbo-default`, instead of the much heavier 72B example. That makes the first-run story more honest without turning the KubeAI section into a hardware tutorial. I also aligned a couple of small drifts introduced by the previous pass: the top-level example now shows `setup ...` followed by `render` instead of `render --profile`, the top-level `describe-profile` example uses the same smaller default profile, and the missing-config guidance points to the same Compose-first profile the README uses. That keeps the onboarding story consistent from error messages through the main command list and backend sections.
+
+Design takeaways:
+1. A command that persists state should save only the state it conceptually owns, even if it accepts extra runtime overrides for convenience.
+2. When a README happy path is hardware-sensitive, a smaller built-in example is often better than a disclaimer about the larger one.
+3. Small message drift matters in setup-oriented tools because users notice inconsistency before they understand the underlying model.
