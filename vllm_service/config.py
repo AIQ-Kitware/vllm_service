@@ -15,6 +15,7 @@ MODELS_FILE = Path("models.yaml")
 GENERATED_DIR = Path("generated")
 PLAN_FILE = GENERATED_DIR / "plan.yaml"
 KUBEAI_GENERATED_DIR = GENERATED_DIR / "kubeai"
+KUBEAI_VALUES_FILE = KUBEAI_GENERATED_DIR / "kubeai-values.yaml"
 
 RESOLVED_FILE = PLAN_FILE
 LOCK_FILE = PLAN_FILE
@@ -81,6 +82,60 @@ def default_resource_profiles() -> dict[str, Any]:
             "requests": {"nvidia.com/gpu": 2},
         },
     }
+
+
+def kubeai_values_path(root: Path) -> Path:
+    return root / KUBEAI_VALUES_FILE
+
+
+def resource_profiles_to_kubeai_values(resource_profiles: dict[str, Any] | None) -> dict[str, Any]:
+    values: dict[str, Any] = {"resourceProfiles": {}}
+    for name, spec in (resource_profiles or {}).items():
+        item: dict[str, Any] = {}
+        if spec.get("node_selector"):
+            item["nodeSelector"] = deepcopy(spec["node_selector"])
+        if spec.get("requests"):
+            item["requests"] = deepcopy(spec["requests"])
+        if spec.get("limits"):
+            item["limits"] = deepcopy(spec["limits"])
+        if spec.get("tolerations"):
+            item["tolerations"] = deepcopy(spec["tolerations"])
+        if spec.get("runtime_class_name"):
+            item["runtimeClassName"] = spec["runtime_class_name"]
+        if spec.get("scheduler_name"):
+            item["schedulerName"] = spec["scheduler_name"]
+        if spec.get("image_name"):
+            item["imageName"] = spec["image_name"]
+        values["resourceProfiles"][name] = item
+    return values
+
+
+def kubeai_values_to_resource_profiles(values_doc: dict[str, Any] | None) -> dict[str, Any]:
+    profiles: dict[str, Any] = {}
+    for name, spec in ((values_doc or {}).get("resourceProfiles", {}) or {}).items():
+        profiles[name] = {
+            "node_selector": deepcopy(spec.get("nodeSelector", {})),
+            "requests": deepcopy(spec.get("requests", {})),
+            "limits": deepcopy(spec.get("limits", {})),
+            "tolerations": deepcopy(spec.get("tolerations", [])),
+            "runtime_class_name": spec.get("runtimeClassName"),
+            "scheduler_name": spec.get("schedulerName"),
+            "image_name": spec.get("imageName"),
+        }
+    return profiles
+
+
+def load_kubeai_resource_profiles(root: Path) -> tuple[dict[str, Any], Path]:
+    path = kubeai_values_path(root)
+    if not path.exists():
+        return {}, path
+    return kubeai_values_to_resource_profiles(load_yaml(path)), path
+
+
+def save_kubeai_resource_profiles(root: Path, values_doc: dict[str, Any]) -> Path:
+    path = kubeai_values_path(root)
+    save_yaml(path, values_doc)
+    return path
 
 
 def normalized_state(root: Path, state: dict[str, Any] | None) -> dict[str, str]:

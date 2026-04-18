@@ -80,3 +80,22 @@ Design takeaways:
 1. A command that persists state should save only the state it conceptually owns, even if it accepts extra runtime overrides for convenience.
 2. When a README happy path is hardware-sensitive, a smaller built-in example is often better than a disclaimer about the larger one.
 3. Small message drift matters in setup-oriented tools because users notice inconsistency before they understand the underlying model.
+
+## 2026-04-18 23:53:31 +0000
+
+Summary of user intent: do a focused KubeAI bugfix pass so local validation/render/deploy use the same resource-profile source as the Helm install flow, without requiring users to duplicate resource profiles manually in `config.yaml`.
+
+Model and configuration: Codex (GPT-5-based coding agent), default in-session configuration.
+
+This pass clarified a mismatch that had been hiding in plain sight: the repo was conceptually treating KubeAI Helm values as the thing we install, but still validating against `config.yaml.resource_profiles` unless that section happened to be present. The cleanest small fix was to introduce an explicit canonical local file, `generated/kubeai/kubeai-values.yaml`, and make the KubeAI path prefer that file as the resource-profile source of truth whenever it exists. I added a `kubeai-sync-resource-profiles --from-file ...` command, plus a `setup --resource-profiles-file ...` convenience hook, so the user can generate or handwrite one values file and then sync it into the repo-local location that `validate`, `render`, and the Helm install step all agree on.
+
+I intentionally kept a compatibility fallback to `config.yaml.resource_profiles` when no synced KubeAI values file exists. The tests made it obvious that making the synced file mandatory would have turned this into a larger behavior change than the prompt asked for. The resulting model is: synced KubeAI values file first, config fallback second. That still solves the real bug because the new local file now overrides the stale or missing config case, which was the operational pain point. It also keeps the current setup/render path from breaking for users who have not yet adopted the sync step.
+
+The other important detail was invalidation. Because `generated/kubeai/kubeai-values.yaml` is both the synced local source and the rendered Helm values artifact, syncing new resource profiles must invalidate any old plan so `deploy` cannot quietly reuse stale KubeAI artifacts. I handled that by removing `generated/plan.yaml` in the sync path. On the usability side, I tightened namespace messaging in `status` and `deploy` so a namespace mismatch now points users back to the configured `setup --backend kubeai --namespace ...` value instead of surfacing only raw command failure text.
+
+The README changes stay focused on this plumbing fix. I replaced the old “HACK” section with the actual built-in profile names the repo expects, routed the generated file through `python manage.py kubeai-sync-resource-profiles --from-file values-kubeai-local-gpu.yaml`, updated the Helm install example to use `generated/kubeai/kubeai-values.yaml`, and added the preflight `helm list -n kubeai` / `kubectl -n kubeai get pods` check before the KubeAI backend flow. That makes the docs match the code path again, which is the real win here.
+
+Design takeaways:
+1. A local generated artifact can safely be the source of truth if there is an explicit sync step and render invalidates stale plans after that sync.
+2. Compatibility fallbacks are worth keeping when they preserve an existing happy path without weakening the new preferred source of truth.
+3. Namespace-sensitive Kubernetes errors are much more actionable when the CLI points back to the exact namespace-setting command users actually ran.

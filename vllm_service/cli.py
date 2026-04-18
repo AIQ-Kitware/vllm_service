@@ -19,8 +19,10 @@ from .config import (
     MODELS_FILE,
     PLAN_FILE,
     initial_config,
+    load_kubeai_resource_profiles,
     load_yaml,
     normalized_catalogs,
+    save_kubeai_resource_profiles,
     save_yaml,
 )
 from .contracts import load_profile_contract
@@ -28,7 +30,7 @@ from .docker_utils import compose_down, compose_up
 from .env_utils import parse_env_file
 from .exporters import export_benchmark_bundle
 from .hardware import simulate_inventory
-from .kubeai_ops import deploy_rendered_artifacts, print_status as kubeai_print_status
+from .kubeai_ops import CommandError, deploy_rendered_artifacts, print_status as kubeai_print_status
 from .profile_runtime import default_base_url
 from .renderer import render_from_lock
 from .resolver import resolve
@@ -356,6 +358,17 @@ def cmd_setup(args: argparse.Namespace) -> int:
     save_yaml(cfg_path, cfg)
     if not models_path().exists():
         save_yaml(models_path(), {"models": {}, "profiles": {}})
+    if getattr(args, "resource_profiles_file", None):
+        source = Path(args.resource_profiles_file)
+        if not source.is_absolute():
+            source = root_dir() / source
+        values_doc = load_yaml(source)
+        if "resourceProfiles" not in values_doc:
+            raise SystemExit(f"{source} is missing a top-level resourceProfiles map")
+        target = save_kubeai_resource_profiles(root_dir(), values_doc)
+        if plan_path().exists():
+            plan_path().unlink()
+        print(f"Wrote {target}")
     print(f"Wrote {cfg_path}")
     print(
         f"Configured backend={cfg.get('backend', 'compose')} "
@@ -631,7 +644,15 @@ def cmd_deploy(args: argparse.Namespace) -> int:
         cmd_render(render_args)
     if backend_name(cfg) == "kubeai":
         plan = load_yaml(plan_path())
-        deploy_rendered_artifacts(root_dir(), plan["deployment"])
+        try:
+            deploy_rendered_artifacts(root_dir(), plan["deployment"])
+        except CommandError as ex:
+            namespace = cfg.get("cluster", {}).get("namespace", "kubeai")
+            raise SystemExit(
+                f"Failed to deploy to namespace {namespace!r}. Confirm `python manage.py setup --backend kubeai --namespace {namespace}` "
+                "matches the namespace where the KubeAI Helm release is installed.\n"
+                f"Original error: {ex}"
+            ) from ex
         return 0
     compose_up(
         cfg["runtime"]["compose_cmd"],
@@ -647,7 +668,14 @@ def cmd_status(args: argparse.Namespace) -> int:
     cfg = config_for_runtime(args)
     if backend_name(cfg) == "kubeai":
         namespace = cfg.get("cluster", {}).get("namespace", "kubeai")
-        kubeai_print_status(namespace)
+        try:
+            kubeai_print_status(namespace)
+        except CommandError as ex:
+            raise SystemExit(
+                f"Failed to query KubeAI resources in namespace {namespace!r}. Confirm `python manage.py setup --backend kubeai --namespace {namespace}` "
+                "matches the namespace where the KubeAI Helm release is installed.\n"
+                f"Original error: {ex}"
+            ) from ex
         return 0
     proc = subprocess.run(cfg["runtime"]["compose_cmd"].split() + ["-f", str(generated_dir() / "docker-compose.yml"), "ps"])
     return int(proc.returncode)
@@ -684,6 +712,22 @@ def cmd_smoke_test(args: argparse.Namespace) -> int:
     resp = requests.post(f"{base_url}/chat/completions", headers=headers, json=payload, timeout=120)
     resp.raise_for_status()
     print(json.dumps(resp.json(), indent=2))
+    return 0
+
+
+def cmd_kubeai_sync_resource_profiles(args: argparse.Namespace) -> int:
+    source = Path(args.from_file)
+    if not source.is_absolute():
+        source = root_dir() / source
+    values_doc = load_yaml(source)
+    if "resourceProfiles" not in values_doc:
+        raise SystemExit(f"{source} is missing a top-level resourceProfiles map")
+    target = save_kubeai_resource_profiles(root_dir(), values_doc)
+    if plan_path().exists():
+        plan_path().unlink()
+    profiles, _ = load_kubeai_resource_profiles(root_dir())
+    print(f"Wrote {target}")
+    print(f"Synced {len(profiles)} KubeAI resource profile(s)")
     return 0
 
 
@@ -735,6 +779,11 @@ def build_parser() -> argparse.ArgumentParser:
         include_state=True,
     )
     s.add_argument("--reset", action="store_true", help="Start from default config values before applying overrides.")
+    s.add_argument(
+        "--resource-profiles-file",
+        default=None,
+        help="For kubeai setups, sync a local Helm values file with resourceProfiles into generated/kubeai/kubeai-values.yaml.",
+    )
     s.set_defaults(func=cmd_setup)
 
     s = sub.add_parser("init")
@@ -772,6 +821,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("list-profiles")
     s.set_defaults(func=cmd_list_profiles)
+
+    s = sub.add_parser("kubeai-sync-resource-profiles")
+    s.add_argument("--from-file", required=True, help="Helm values file containing a top-level resourceProfiles map.")
+    s.set_defaults(func=cmd_kubeai_sync_resource_profiles)
 
     s = sub.add_parser("explain")
     s.add_argument("--file", default=None)

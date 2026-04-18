@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from .catalog import canonical_profile_name, normalize_model_catalog, normalize_profile_catalog
-from .config import merged_catalogs, normalized_cluster, normalized_state
+from .config import load_kubeai_resource_profiles, merged_catalogs, normalized_cluster, normalized_state
 from .hardware import detect_inventory
 
 
@@ -188,6 +188,17 @@ def resolve(
         "benchmark_transport": deepcopy(profile.get("benchmark_transport", {})),
     }
 
+    if backend == "kubeai":
+        resource_profiles, resource_profiles_path = load_kubeai_resource_profiles(root)
+        if resource_profiles:
+            resource_profile_source = str(resource_profiles_path)
+        else:
+            resource_profiles = deepcopy(config.get("resource_profiles", {}))
+            resource_profile_source = "config.yaml.resource_profiles"
+    else:
+        resource_profiles = deepcopy(config.get("resource_profiles", {}))
+        resource_profile_source = "config.yaml.resource_profiles"
+
     return {
         "schema_version": 4,
         "source": {
@@ -204,7 +215,8 @@ def resolve(
         },
         "state": normalized_state(root, config.get("state", {})),
         "cluster": normalized_cluster(config.get("cluster", {})),
-        "resource_profiles": deepcopy(config.get("resource_profiles", {})),
+        "resource_profiles": resource_profiles,
+        "resource_profiles_source": resource_profile_source,
         "inventory": inventory,
         "profile": serving_profile,
         "serving_profile": deepcopy(serving_profile),

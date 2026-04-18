@@ -5,29 +5,12 @@ from typing import Any
 
 import yaml
 
+from ..config import resource_profiles_to_kubeai_values
 from ..profile_runtime import vllm_args
 
 
 def _resource_profile_values(plan: dict[str, Any]) -> dict[str, Any]:
-    values: dict[str, Any] = {"resourceProfiles": {}}
-    for name, spec in (plan.get("deployment", {}).get("resource_profiles", {}) or {}).items():
-        item: dict[str, Any] = {}
-        if spec.get("node_selector"):
-            item["nodeSelector"] = spec["node_selector"]
-        if spec.get("requests"):
-            item["requests"] = spec["requests"]
-        if spec.get("limits"):
-            item["limits"] = spec["limits"]
-        if spec.get("tolerations"):
-            item["tolerations"] = spec["tolerations"]
-        if spec.get("runtime_class_name"):
-            item["runtimeClassName"] = spec["runtime_class_name"]
-        if spec.get("scheduler_name"):
-            item["schedulerName"] = spec["scheduler_name"]
-        if spec.get("image_name"):
-            item["imageName"] = spec["image_name"]
-        values["resourceProfiles"][name] = item
-    return values
+    return resource_profiles_to_kubeai_values(plan.get("deployment", {}).get("resource_profiles", {}))
 
 
 def _model_doc(service: dict[str, Any]) -> dict[str, Any]:
