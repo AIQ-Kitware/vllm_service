@@ -13,6 +13,24 @@ def _resource_profile_values(plan: dict[str, Any]) -> dict[str, Any]:
     return values_doc or {"resourceProfiles": {}}
 
 
+def _kubeai_resource_profile(service: dict[str, Any]) -> str:
+    profile = str(service.get("resource_profile", ""))
+    if not profile or ":" in profile:
+        return profile
+    gpu_count = max(
+        1,
+        len(service.get("gpu_indices", [])),
+        int(service.get("tensor_parallel_size", 1) or 1),
+    )
+    return f"{profile}:{gpu_count}"
+
+
+def _kubeai_args(service: dict[str, Any]) -> list[str]:
+    kubeai_service = dict(service)
+    kubeai_service["served_model_name"] = service["profile_public_name"]
+    return vllm_args(kubeai_service)
+
+
 def _model_doc(service: dict[str, Any]) -> dict[str, Any]:
     doc = {
         "apiVersion": "kubeai.org/v1",
@@ -30,10 +48,10 @@ def _model_doc(service: dict[str, Any]) -> dict[str, Any]:
             "features": service.get("features", ["TextGeneration"]),
             "url": service["model_url"],
             "engine": service.get("engine", "VLLM"),
-            "resourceProfile": service["resource_profile"],
+            "resourceProfile": _kubeai_resource_profile(service),
             "minReplicas": int(service.get("min_replicas", 0)),
             "maxReplicas": int(service.get("max_replicas", 1)),
-            "args": vllm_args(service),
+            "args": _kubeai_args(service),
         },
     }
     if service.get("priority_class_name"):

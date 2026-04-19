@@ -61,7 +61,9 @@ def test_kubeai_render_uses_profile_identity(tmp_path: Path) -> None:
     models = list(yaml.safe_load_all((tmp_path / "generated" / "kubeai" / "models.yaml").read_text()))
     assert models[0]["metadata"]["name"] == "qwen2-72b-instruct-tp2-balanced"
     assert models[0]["metadata"]["annotations"]["vllm-service/logical-model-name"] == "qwen/qwen2-72b-instruct"
+    assert models[0]["spec"]["resourceProfile"] == "gpu-tp2-balanced:2"
     assert "--tensor-parallel-size=2" in models[0]["spec"]["args"]
+    assert "--served-model-name=qwen2-72b-instruct-tp2-balanced" in models[0]["spec"]["args"]
 
 
 def test_compose_render_includes_profile_labels_and_aliases(tmp_path: Path) -> None:
