@@ -2,30 +2,12 @@
 
 `vllm_service` manages **named serving profiles** for local and Kubernetes-backed inference.
 
-A serving profile is a complete serving recipe for a model, including:
-
-* which model to load
-* what public name to serve it under
-* how requests should reach it
-* how it should use GPUs
-* runtime settings such as tensor parallelism, context length, and batching
-
 This repo can render and run those profiles through two backends:
 
 * **Compose** for local single-host serving
 * **KubeAI** for Kubernetes-backed serving
 
-## Main idea
-
-You usually do not work directly with raw model IDs.
-
-You work with a **profile name**, for example:
-
-* `gpt-oss-20b-completions`
-* `gpt-oss-20b-chat`
-* `qwen2-72b-instruct-tp2-balanced`
-
-Each profile resolves to a concrete serving plan.
+A serving profile bundles the model, the public served name, placement, and runtime settings.
 
 ## Main commands
 
@@ -48,46 +30,22 @@ python manage.py smoke-test
 python manage.py describe-profile qwen2-5-7b-instruct-turbo-default --format yaml
 ```
 
-That command prints the resolved serving contract for the profile, including model identity, access shape, placement, and runtime settings.
-
 ---
 
 ## Backend 1: Compose
 
-Use the Compose backend when you want the simplest local path on one machine.
-
-### What it gives you
-
-* easy local startup
-* inspectable generated files
-* simple iteration on one host
-* a stable local API front door through LiteLLM
-
-### What it does not give you
-
-* Kubernetes-style model objects
-* Kubernetes routing and deployment behavior
-* cluster-managed serving
+Use Compose when you know exactly which profile you want and want the lowest-friction local deployment.
 
 ### Getting started
 
-Prerequisite: Docker and the `docker compose` plugin must be installed on the local machine.
+Prerequisite: Docker and the `docker compose` plugin must be installed.
 
 ```bash
 python manage.py setup --backend compose --profile qwen2-5-7b-instruct-turbo-default
-python manage.py list-profiles
-python manage.py describe-profile qwen2-5-7b-instruct-turbo-default --format yaml
 python manage.py validate
 python manage.py render
 python manage.py up -d
 ```
-
-The Compose backend renders files such as:
-
-* `generated/plan.yaml`
-* `generated/docker-compose.yml`
-* `generated/.env`
-* runtime files under `state/runtime`
 
 ### Test that it is responding
 
@@ -131,48 +89,19 @@ python manage.py down
 
 ## Backend 2: KubeAI
 
-Use the KubeAI backend when you want the same serving-profile model, but deployed through Kubernetes.
+Use KubeAI when you want Kubernetes-managed serving.
 
-### What it adds beyond Compose
+### Important rules
 
-* profiles rendered as KubeAI and Kubernetes artifacts
-* an OpenAI-compatible front door through KubeAI
-* deployment through `kubectl` and Helm-backed KubeAI install flow
-* profile switching through the Kubernetes path
+1. **Use the same namespace everywhere.** The namespace in `python manage.py setup --namespace ...` must match the namespace where the KubeAI Helm release already exists.
+2. **Prefer the repo-driven path.** The normal path is `setup` -> `validate` -> `render` -> `deploy` -> `status`.
+3. **`kubectl port-forward` stays in the foreground.** Leave it running in one terminal and send requests from another.
+4. **The first request can take a while.** `/openai/v1/models` may work before chat completions work. The first completion may trigger pod creation, image pull, model load, and compile warmup.
+5. **On the current repo version, KubeAI still needs a live workaround after deploy.** The renderer currently produces a `Model` spec that needs a small manual patch to work with the KubeAI version used in these notes.
 
-### What changes compared to Compose
+### KubeAI prerequisites
 
-* you use `deploy` instead of `up`
-* the default front door is `/openai/v1`
-* generated artifacts go under `generated/kubeai/`
-* you need a working Kubernetes cluster and KubeAI installed or installable
-
-The backend itself is `kubeai` on Kubernetes. The repo may show K3s examples for single-node setup, but the serving backend is not K3s-specific in concept.
-
-## KubeAI quick start: important rules
-
-Before the detailed steps, keep these four rules in mind:
-
-1. **Use the same namespace everywhere.**  
-   The namespace in `python manage.py setup --namespace ...` must match the namespace where the KubeAI Helm release already exists, or the namespace where you want the repo to install it.
-
-2. **Prefer the repo-driven path.**  
-   The normal path in this repo is:
-   `setup` → `validate` → `render` → `deploy` → `status`
-
-3. **`kubectl port-forward` stays in the foreground.**  
-   Leave it running in one terminal and run requests from another.
-
-4. **The first request can take a while.**  
-   `/openai/v1/models` may work before chat completions work. The first real completion request may trigger KubeAI to create the model-serving pod.
-
----
-
-## KubeAI prerequisites
-
-### Kubernetes
-
-The KubeAI backend needs:
+You need:
 
 * a working Kubernetes cluster
 * `kubectl`
@@ -183,10 +112,8 @@ If you want a quick local single-node cluster, K3s is a good option.
 Install K3s:
 
 ```bash
-# Latest
 curl -sfL https://get.k3s.io | sh -
-
-# Or pin a version
+# or pin
 curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION='v1.34.3+k3s1' sh -
 ```
 
@@ -211,7 +138,7 @@ helm version
 
 ### NVIDIA GPU support
 
-If this machine has NVIDIA GPUs, install the NVIDIA device plugin and GPU Feature Discovery so Kubernetes can expose GPU resources and labels:
+Install the NVIDIA device plugin and GPU Feature Discovery so Kubernetes can expose GPU resources and labels:
 
 ```bash
 helm repo add nvdp https://nvidia.github.io/k8s-device-plugin
@@ -233,11 +160,7 @@ kubectl get node "$(kubectl get nodes -o jsonpath='{.items[0].metadata.name}')" 
 kubectl get nodes --show-labels | tr ',' '\n' | grep 'nvidia.com/' || true
 ```
 
-You want to see:
-
-* the NVIDIA plugin pods are `Running`
-* the node reports a non-empty `nvidia.com/gpu` count
-* the node has `nvidia.com/*` labels such as product and memory
+You want to see a non-empty `nvidia.com/gpu` count and `nvidia.com/*` labels such as product and memory.
 
 ### KubeAI Helm repository
 
@@ -245,8 +168,6 @@ You want to see:
 helm repo add kubeai https://www.kubeai.org
 helm repo update
 ```
-
----
 
 ## Determine which namespace to use
 
@@ -260,8 +181,7 @@ fi
 echo "Using KubeAI namespace: ${KUBEAI_NAMESPACE}"
 ```
 
-If a release already exists, **reuse that namespace**.  
-If no release exists yet, the snippet above defaults to `default` so the rest of the commands stay consistent.
+If a release already exists, **reuse that namespace**.
 
 Sanity-check the cluster:
 
@@ -273,13 +193,6 @@ kubectl -n "${KUBEAI_NAMESPACE}" get pods || true
 kubectl get node "$(kubectl get nodes -o jsonpath='{.items[0].metadata.name}')" \
   -o jsonpath='{.status.allocatable.nvidia\.com/gpu}{"\n"}'
 ```
-
-You want to see:
-
-* the node is `Ready`
-* GPU allocatable count is non-empty
-* if KubeAI is already installed, the `kubeai` pod is `Running`
-* if KubeAI is not installed yet, that is okay; `python manage.py deploy` can install or upgrade it
 
 ---
 
@@ -293,6 +206,8 @@ For the built-in serving profiles in this repo, keep these names aligned:
 * `gpu-tp2-balanced`
 * `gpu-tp2-maxctx`
 
+**Important:** include GPU `requests`, GPU `limits`, and `runtimeClassName: nvidia`. Without those, the model pod can land on the GPU node but still start without `libcuda.so.1` available inside the container.
+
 ```bash
 PRODUCT="$(kubectl get nodes -o jsonpath='{.items[0].metadata.labels.nvidia\.com/gpu\.product}')"
 MEMORY="$(kubectl get nodes -o jsonpath='{.items[0].metadata.labels.nvidia\.com/gpu\.memory}')"
@@ -303,16 +218,31 @@ resourceProfiles:
     nodeSelector:
       nvidia.com/gpu.product: "${PRODUCT}"
       nvidia.com/gpu.memory: "${MEMORY}"
+    requests:
+      nvidia.com/gpu: 1
+    limits:
+      nvidia.com/gpu: 1
+    runtimeClassName: nvidia
 
   gpu-tp2-balanced:
     nodeSelector:
       nvidia.com/gpu.product: "${PRODUCT}"
       nvidia.com/gpu.memory: "${MEMORY}"
+    requests:
+      nvidia.com/gpu: 2
+    limits:
+      nvidia.com/gpu: 2
+    runtimeClassName: nvidia
 
   gpu-tp2-maxctx:
     nodeSelector:
       nvidia.com/gpu.product: "${PRODUCT}"
       nvidia.com/gpu.memory: "${MEMORY}"
+    requests:
+      nvidia.com/gpu: 2
+    limits:
+      nvidia.com/gpu: 2
+    runtimeClassName: nvidia
 EOF
 
 cat values-kubeai-local-gpu.yaml
@@ -328,7 +258,7 @@ python manage.py kubeai-sync-resource-profiles --from-file values-kubeai-local-g
 
 ## Example 1: single-GPU system
 
-Use this example on a 1-GPU workstation, or as the first sanity-check profile on a larger machine.
+Use this example on a 1-GPU workstation.
 
 ```bash
 python manage.py setup \
@@ -344,13 +274,46 @@ python manage.py deploy
 python manage.py status
 ```
 
-This is the normal repo-driven path. It renders artifacts under `generated/kubeai/` and then uses `deploy` to install or upgrade the KubeAI release and apply the rendered `Model` objects.
+### Current live workaround for the single-GPU example
+
+On the current repo version, apply this live patch after `deploy`.
+
+This patch does four things:
+
+* keeps the model warm with `minReplicas: 1`
+* changes `resourceProfile` from `gpu-single-default` to `gpu-single-default:1`
+* makes the served model name match the public profile name
+* avoids the duplicate `--served-model-name` mismatch that causes 404s on completions
+
+```bash
+kubectl -n "${KUBEAI_NAMESPACE}" patch model qwen2-5-7b-instruct-turbo-default --type merge -p '{
+  "spec": {
+    "minReplicas": 1,
+    "resourceProfile": "gpu-single-default:1",
+    "args": [
+      "--served-model-name=qwen2-5-7b-instruct-turbo-default",
+      "--tensor-parallel-size=1",
+      "--data-parallel-size=1",
+      "--max-model-len=32768",
+      "--gpu-memory-utilization=0.9",
+      "--max-num-batched-tokens=8192",
+      "--max-num-seqs=16",
+      "--disable-log-requests",
+      "--enable-prefix-caching"
+    ]
+  }
+}'
+
+kubectl -n "${KUBEAI_NAMESPACE}" delete pod -l model=qwen2-5-7b-instruct-turbo-default
+```
+
+If you run `python manage.py render` or `python manage.py deploy` again on the current repo version, re-apply this live patch.
 
 ---
 
 ## Example 2: four-GPU system
 
-On a 4-GPU system, start with the same small single-GPU example above to verify the plumbing first. After that works, switch to a larger multi-GPU profile.
+On a 4-GPU host, do the same **single-GPU smoke test first** to verify the cluster, KubeAI, runtime class, and model plumbing. That exact sequence worked on a 4-GPU machine during bring-up.
 
 ```bash
 python manage.py setup \
@@ -362,20 +325,29 @@ python manage.py validate
 python manage.py render
 python manage.py deploy
 python manage.py status
+
+kubectl -n "${KUBEAI_NAMESPACE}" patch model qwen2-5-7b-instruct-turbo-default --type merge -p '{
+  "spec": {
+    "minReplicas": 1,
+    "resourceProfile": "gpu-single-default:1",
+    "args": [
+      "--served-model-name=qwen2-5-7b-instruct-turbo-default",
+      "--tensor-parallel-size=1",
+      "--data-parallel-size=1",
+      "--max-model-len=32768",
+      "--gpu-memory-utilization=0.9",
+      "--max-num-batched-tokens=8192",
+      "--max-num-seqs=16",
+      "--disable-log-requests",
+      "--enable-prefix-caching"
+    ]
+  }
+}'
+
+kubectl -n "${KUBEAI_NAMESPACE}" delete pod -l model=qwen2-5-7b-instruct-turbo-default
 ```
 
-Then try a multi-GPU profile:
-
-```bash
-python manage.py switch qwen2-72b-instruct-tp2-balanced --apply
-python manage.py status
-```
-
-If you want to inspect the multi-GPU profile before applying it:
-
-```bash
-python manage.py describe-profile qwen2-72b-instruct-tp2-balanced --format yaml
-```
+After the 7B smoke test works, move up to larger profiles such as `qwen2-72b-instruct-tp2-balanced`. On the current repo version, apply the same kind of live patch after deploy: keep `minReplicas: 1`, append `:1` to the chosen `resourceProfile`, and make the single effective `--served-model-name` match the public profile name.
 
 ---
 
@@ -383,8 +355,7 @@ python manage.py describe-profile qwen2-72b-instruct-tp2-balanced --format yaml
 
 If you are not exposing ingress yet, port-forward the service.
 
-**This command stays in the foreground.**  
-Run it in one terminal and leave it there:
+**This command stays in the foreground.** Run it in one terminal and leave it there:
 
 ```bash
 kubectl -n "${KUBEAI_NAMESPACE}" port-forward svc/kubeai 8000:80
@@ -403,33 +374,34 @@ If that works, the KubeAI front door is alive.
 ### Then try the smoke test
 
 ```bash
-python manage.py smoke-test --base-url http://127.0.0.1:8000/openai/v1
+python manage.py smoke-test \
+  --base-url http://127.0.0.1:8000/openai/v1 \
+  --model qwen2-5-7b-instruct-turbo-default
 ```
 
 ### Or test chat completions directly
 
 ```bash
-curl http://127.0.0.1:8000/openai/v1/chat/completions \
+time curl http://127.0.0.1:8000/openai/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{
     "model": "qwen2-5-7b-instruct-turbo-default",
-    "messages": [{"role": "user", "content": "Say hello in one sentence."}],
-    "max_tokens": 64
+    "messages": [{"role": "user", "content": "Say hello in one short sentence."}],
+    "max_tokens": 8
   }'
 ```
 
 ### What to expect on the first request
 
-The first request may be slower than later ones.
-
 Common first-request behavior:
 
-* `/openai/v1/models` works immediately
+* `/openai/v1/models` works before completions work
 * a completion request causes KubeAI to create a model-serving pod
 * that pod may spend time in `ContainerCreating` while the image is pulled
-* chat completions may time out before the first serving pod is fully ready
+* the model then spends more time loading and warming up
+* the first completion can be much slower than later ones
 
-That is not automatically a failure. Watch the system state while the first request is happening.
+That is not automatically a failure. Watch the system state while the first request is happening:
 
 ```bash
 watch -n 1 'kubectl -n '"${KUBEAI_NAMESPACE}"' get pods; echo; kubectl -n '"${KUBEAI_NAMESPACE}"' get models'
@@ -437,75 +409,55 @@ watch -n 1 'kubectl -n '"${KUBEAI_NAMESPACE}"' get pods; echo; kubectl -n '"${KU
 
 ---
 
-## Temporary workaround for the current KubeAI resource-profile format issue
+## Debugging checks
 
-If KubeAI logs show an error like:
-
-```text
-invalid resource profile: "gpu-single-default", should match <name>:<multiple>
-```
-
-then the current rendered `Model` object needs a temporary patch before it will reconcile cleanly.
-
-Check the rendered model file:
+### Check the live Model object
 
 ```bash
-grep -n 'resourceProfile' generated/kubeai/models.yaml
+kubectl -n "${KUBEAI_NAMESPACE}" describe model qwen2-5-7b-instruct-turbo-default
+kubectl -n "${KUBEAI_NAMESPACE}" get model qwen2-5-7b-instruct-turbo-default -o yaml | grep -E 'minReplicas|maxReplicas|resourceProfile'
 ```
 
-If it shows bare values like:
-
-```yaml
-resourceProfile: gpu-single-default
-```
-
-patch them to append `:1`:
+### Check the current model pod
 
 ```bash
-python - <<'PY'
-from pathlib import Path
-import yaml
-
-p = Path("generated/kubeai/models.yaml")
-docs = [d for d in yaml.safe_load_all(p.read_text()) if d]
-
-for d in docs:
-    spec = d.setdefault("spec", {})
-    rp = str(spec.get("resourceProfile", "")).strip()
-    if rp and ":" not in rp:
-        spec["resourceProfile"] = f"{rp}:1"
-
-p.write_text("---\n".join(yaml.safe_dump(d, sort_keys=False) for d in docs))
-print(p.read_text())
-PY
+kubectl -n "${KUBEAI_NAMESPACE}" describe pod "$(kubectl -n "${KUBEAI_NAMESPACE}" get pods -o name | grep 'model-qwen2-5-7b-instruct-turbo-default' | tail -n 1 | cut -d/ -f2)"
 ```
 
-Then re-apply the rendered model objects:
+### Tail KubeAI controller logs
 
 ```bash
-kubectl -n "${KUBEAI_NAMESPACE}" apply -f generated/kubeai/models.yaml
+kubectl -n "${KUBEAI_NAMESPACE}" logs deploy/kubeai --tail=200 -f
 ```
 
-This is a temporary workaround for the current renderer and KubeAI version mismatch. Once the renderer is fixed, this manual patch should no longer be necessary.
-
----
-
-## Switching profiles
-
-You can change the active serving profile and apply it through the backend:
+### Tail model-server logs
 
 ```bash
-python manage.py switch gpt-oss-20b-chat --apply
-python manage.py status
+kubectl -n "${KUBEAI_NAMESPACE}" logs -f "$(kubectl -n "${KUBEAI_NAMESPACE}" get pods -o name | grep 'model-qwen2-5-7b-instruct-turbo-default' | tail -n 1 | cut -d/ -f2)" -c server
 ```
 
-Then test again:
+If the model pod restarted, inspect the previous crash:
 
 ```bash
-curl http://127.0.0.1:8000/openai/v1/models
+kubectl -n "${KUBEAI_NAMESPACE}" logs "$(kubectl -n "${KUBEAI_NAMESPACE}" get pods -o name | grep 'model-qwen2-5-7b-instruct-turbo-default' | tail -n 1 | cut -d/ -f2)" -c server --previous
 ```
 
-This is a profile switch and re-apply. It is not a claim that requests automatically lazy-load arbitrary new models without redeployment.
+### Check recent events
+
+```bash
+kubectl -n "${KUBEAI_NAMESPACE}" get events --sort-by=.lastTimestamp | tail -n 40
+```
+
+### Common bad states and what they mean
+
+* `invalid resource profile: "gpu-single-default", should match <name>:<multiple>`
+  * append `:1` in the live `Model` spec
+* `libcuda.so.1: cannot open shared object file`
+  * the pod landed on the GPU node without actually requesting a GPU; fix the resource-profile file to include GPU requests, limits, and `runtimeClassName: nvidia`
+* `/models` works but completions 404 with `The model ... does not exist.`
+  * the served model name does not match the public profile name; apply the live args patch above
+* startup probe fails with `connection refused`
+  * the model pod may still be pulling the image, loading the model, or warming up
 
 ---
 
@@ -523,138 +475,11 @@ Move to **KubeAI** when you want:
 * KubeAI’s OpenAI-compatible front door
 * profile deployment through Kubernetes artifacts
 
-A practical learning path is:
+A good workflow is:
 
 1. inspect a profile with `describe-profile`
-2. run it with Compose
+2. run it with Compose when you want the simplest local deployment
 3. move to KubeAI when you want Kubernetes-backed serving
 
----
+Compose is the better fit when you already know which profile you want. KubeAI has more first-request overhead because it may need to create pods, pull images, load the model, and warm up the backend.
 
-## Files you will look at most often
-
-* `config.yaml`
-* `models.yaml`
-* `generated/plan.yaml`
-* `generated/docker-compose.yml`
-* `generated/kubeai/models.yaml`
-
----
-
-## Environment variable fallbacks
-
-The `setup` command is the recommended first-run path, but the same common settings can also come from environment variables when that is easier for local automation.
-
-Recognized variables include:
-
-* `VLLM_SERVICE_BACKEND`
-* `VLLM_SERVICE_PROFILE`
-* `VLLM_SERVICE_COMPOSE_CMD`
-* `VLLM_SERVICE_LITELLM_PORT`
-* `VLLM_SERVICE_OPEN_WEBUI_PORT`
-* `VLLM_SERVICE_POSTGRES_PORT`
-* `VLLM_SERVICE_STATE_ROOT`
-* `VLLM_SERVICE_RUNTIME_DIR`
-* `VLLM_SERVICE_NAMESPACE`
-* `VLLM_SERVICE_INGRESS_ENABLED`
-* `VLLM_SERVICE_INGRESS_HOST`
-
----
-
-## Troubleshooting
-
-If something is unclear, check in this order:
-
-```bash
-python manage.py list-profiles
-python manage.py describe-profile <profile> --format yaml
-python manage.py validate
-python manage.py render
-python manage.py status
-```
-
-Then check Kubernetes state directly:
-
-```bash
-kubectl -n "${KUBEAI_NAMESPACE}" get pods
-kubectl -n "${KUBEAI_NAMESPACE}" get svc
-kubectl -n "${KUBEAI_NAMESPACE}" get ingress
-kubectl -n "${KUBEAI_NAMESPACE}" get models
-kubectl -n "${KUBEAI_NAMESPACE}" get events --sort-by=.lastTimestamp | tail -n 40
-```
-
-Check the KubeAI controller logs:
-
-```bash
-kubectl -n "${KUBEAI_NAMESPACE}" logs deploy/kubeai --tail=200 -f
-```
-
-Describe the `Model` object:
-
-```bash
-kubectl -n "${KUBEAI_NAMESPACE}" describe model qwen2-5-7b-instruct-turbo-default
-```
-
-Describe the model-serving pod after it appears:
-
-```bash
-kubectl -n "${KUBEAI_NAMESPACE}" describe pod <model-pod-name>
-```
-
-Useful signs while debugging:
-
-* `kubectl port-forward` staying attached is normal
-* `No resources found in <namespace>.` during `status` often just means there is no ingress yet
-* `/openai/v1/models` can work before completions work
-* the first request may create the model-serving pod
-* `ContainerCreating` on the first serving pod often just means the image is still being pulled
-
-
-
-HARD CODED FIXES:
-
-TODO: integrate this into the readme so you don't get into a failing state to start with.
-
-
-cat > values-kubeai-local-gpu.yaml <<'EOF'
-resourceProfiles:
-  gpu-single-default:
-    nodeSelector:
-      nvidia.com/gpu.product: "NVIDIA-RTX-PRO-6000-Blackwell-Max-Q-Workstation-Edition"
-      nvidia.com/gpu.memory: "97887"
-    requests:
-      nvidia.com/gpu: 1
-    limits:
-      nvidia.com/gpu: 1
-    runtimeClassName: nvidia
-
-  gpu-tp2-balanced:
-    nodeSelector:
-      nvidia.com/gpu.product: "NVIDIA-RTX-PRO-6000-Blackwell-Max-Q-Workstation-Edition"
-      nvidia.com/gpu.memory: "97887"
-    requests:
-      nvidia.com/gpu: 2
-    limits:
-      nvidia.com/gpu: 2
-    runtimeClassName: nvidia
-
-  gpu-tp2-maxctx:
-    nodeSelector:
-      nvidia.com/gpu.product: "NVIDIA-RTX-PRO-6000-Blackwell-Max-Q-Workstation-Edition"
-      nvidia.com/gpu.memory: "97887"
-    requests:
-      nvidia.com/gpu: 2
-    limits:
-      nvidia.com/gpu: 2
-    runtimeClassName: nvidia
-EOF
-
-cat values-kubeai-local-gpu.yaml
-
-python manage.py kubeai-sync-resource-profiles --from-file values-kubeai-local-gpu.yaml
-python manage.py render
-python manage.py deploy
-
-kubectl -n default delete pod -l model=qwen2-5-7b-instruct-turbo-default
-
-watch -n 1 'kubectl -n default get pods; echo; kubectl -n default get models'
