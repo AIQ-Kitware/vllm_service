@@ -16,6 +16,7 @@ GENERATED_DIR = Path("generated")
 PLAN_FILE = GENERATED_DIR / "plan.yaml"
 KUBEAI_GENERATED_DIR = GENERATED_DIR / "kubeai"
 KUBEAI_VALUES_FILE = KUBEAI_GENERATED_DIR / "kubeai-values.yaml"
+KUBEAI_LOCAL_VALUES_FILE = Path("kubeai-values.local.yaml")
 
 RESOLVED_FILE = PLAN_FILE
 LOCK_FILE = PLAN_FILE
@@ -88,6 +89,10 @@ def kubeai_values_path(root: Path) -> Path:
     return root / KUBEAI_VALUES_FILE
 
 
+def kubeai_local_values_path(root: Path) -> Path:
+    return root / KUBEAI_LOCAL_VALUES_FILE
+
+
 def resource_profiles_to_kubeai_values(resource_profiles: dict[str, Any] | None) -> dict[str, Any]:
     values: dict[str, Any] = {"resourceProfiles": {}}
     for name, spec in (resource_profiles or {}).items():
@@ -113,27 +118,20 @@ def resource_profiles_to_kubeai_values(resource_profiles: dict[str, Any] | None)
 def kubeai_values_to_resource_profiles(values_doc: dict[str, Any] | None) -> dict[str, Any]:
     profiles: dict[str, Any] = {}
     for name, spec in ((values_doc or {}).get("resourceProfiles", {}) or {}).items():
-        profiles[name] = {
-            "node_selector": deepcopy(spec.get("nodeSelector", {})),
-            "requests": deepcopy(spec.get("requests", {})),
-            "limits": deepcopy(spec.get("limits", {})),
-            "tolerations": deepcopy(spec.get("tolerations", [])),
-            "runtime_class_name": spec.get("runtimeClassName"),
-            "scheduler_name": spec.get("schedulerName"),
-            "image_name": spec.get("imageName"),
-        }
+        profiles[name] = deepcopy(spec)
     return profiles
 
 
-def load_kubeai_resource_profiles(root: Path) -> tuple[dict[str, Any], Path]:
-    path = kubeai_values_path(root)
+def load_kubeai_resource_profiles(root: Path) -> tuple[dict[str, Any], dict[str, Any], Path]:
+    path = kubeai_local_values_path(root)
     if not path.exists():
-        return {}, path
-    return kubeai_values_to_resource_profiles(load_yaml(path)), path
+        return {}, {}, path
+    values_doc = load_yaml(path)
+    return kubeai_values_to_resource_profiles(values_doc), values_doc, path
 
 
 def save_kubeai_resource_profiles(root: Path, values_doc: dict[str, Any]) -> Path:
-    path = kubeai_values_path(root)
+    path = kubeai_local_values_path(root)
     save_yaml(path, values_doc)
     return path
 

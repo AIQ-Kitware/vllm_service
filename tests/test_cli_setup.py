@@ -9,6 +9,7 @@ from pathlib import Path
 import yaml
 
 from vllm_service import cli as cli_mod
+from vllm_service.config import kubeai_local_values_path
 
 
 MANAGE_PY = Path(__file__).resolve().parents[1] / "manage.py"
@@ -37,7 +38,8 @@ def write_kubeai_values_file(path: Path) -> None:
                         "nodeSelector": {
                             "nvidia.com/gpu.product": "NVIDIA_TEST_GPU",
                             "nvidia.com/gpu.memory": "81920",
-                        }
+                        },
+                        "extraField": "keep-me",
                     },
                     "gpu-tp2-balanced": {
                         "nodeSelector": {
@@ -106,8 +108,9 @@ def test_setup_kubeai_with_resource_profiles_file_syncs_canonical_values(tmp_pat
         "--resource-profiles-file",
         str(source),
     )
-    values_doc = yaml.safe_load((tmp_path / "generated" / "kubeai" / "kubeai-values.yaml").read_text())
+    values_doc = yaml.safe_load(kubeai_local_values_path(tmp_path).read_text())
     assert "gpu-single-default" in values_doc["resourceProfiles"]
+    assert values_doc["resourceProfiles"]["gpu-single-default"]["extraField"] == "keep-me"
 
 
 def test_render_overrides_backend_and_profile_without_persisting_config(tmp_path: Path) -> None:
@@ -171,6 +174,53 @@ def test_kubeai_sync_resource_profiles_then_validate_without_config_duplication(
     (tmp_path / "config.yaml").write_text(yaml.safe_dump(cfg, sort_keys=False), encoding="utf-8")
     run_cli(tmp_path, "kubeai-sync-resource-profiles", "--from-file", str(source))
     run_cli(tmp_path, "validate", "--simulate-hardware", "1x96")
+
+
+def test_kubeai_config_fallback_still_works_before_and_after_render_without_sync(tmp_path: Path) -> None:
+    run_cli(
+        tmp_path,
+        "setup",
+        "--backend",
+        "kubeai",
+        "--profile",
+        "qwen2-5-7b-instruct-turbo-default",
+        "--namespace",
+        "kubeai",
+    )
+    run_cli(tmp_path, "validate", "--simulate-hardware", "1x96")
+    run_cli(tmp_path, "render", "--simulate-hardware", "1x96")
+    assert not kubeai_local_values_path(tmp_path).exists()
+    cfg = yaml.safe_load((tmp_path / "config.yaml").read_text())
+    cfg["resource_profiles"]["gpu-single-default"]["node_selector"] = {"example.com/profile-source": "config-after-render"}
+    (tmp_path / "config.yaml").write_text(yaml.safe_dump(cfg, sort_keys=False), encoding="utf-8")
+    run_cli(tmp_path, "validate", "--simulate-hardware", "1x96")
+    run_cli(tmp_path, "render", "--simulate-hardware", "1x96")
+    rendered_values = yaml.safe_load((tmp_path / "generated" / "kubeai" / "kubeai-values.yaml").read_text())
+    assert rendered_values["resourceProfiles"]["gpu-single-default"]["nodeSelector"]["example.com/profile-source"] == "config-after-render"
+
+
+def test_kubeai_synced_source_is_preferred_over_config_and_preserves_unknown_fields(tmp_path: Path) -> None:
+    source = tmp_path / "values-kubeai-local-gpu.yaml"
+    write_kubeai_values_file(source)
+    run_cli(
+        tmp_path,
+        "setup",
+        "--backend",
+        "kubeai",
+        "--profile",
+        "qwen2-5-7b-instruct-turbo-default",
+        "--namespace",
+        "kubeai",
+    )
+    cfg = yaml.safe_load((tmp_path / "config.yaml").read_text())
+    cfg["resource_profiles"]["gpu-single-default"]["node_selector"] = {"example.com/profile-source": "config"}
+    (tmp_path / "config.yaml").write_text(yaml.safe_dump(cfg, sort_keys=False), encoding="utf-8")
+    run_cli(tmp_path, "kubeai-sync-resource-profiles", "--from-file", str(source))
+    run_cli(tmp_path, "render", "--simulate-hardware", "1x96")
+    generated_values = yaml.safe_load((tmp_path / "generated" / "kubeai" / "kubeai-values.yaml").read_text())
+    assert generated_values["resourceProfiles"]["gpu-single-default"]["nodeSelector"]["nvidia.com/gpu.product"] == "NVIDIA_TEST_GPU"
+    assert generated_values["resourceProfiles"]["gpu-single-default"]["extraField"] == "keep-me"
+    assert "example.com/profile-source" not in generated_values["resourceProfiles"]["gpu-single-default"].get("nodeSelector", {})
 
 
 def test_switch_apply_persists_only_active_profile_and_uses_transient_overrides(

@@ -21,7 +21,7 @@ def validate_resolved(resolved: dict[str, Any]) -> dict[str, Any]:
     if backend == "kubeai":
         profiles = resolved.get("resource_profiles", {})
         if not profiles:
-            source = resolved.get("resource_profiles_source", "generated/kubeai/kubeai-values.yaml")
+            source = resolved.get("resource_profiles_source", "kubeai-values.local.yaml")
             errors.append(
                 "No local KubeAI resource profiles were loaded for validation. "
                 f"Expected them at {source}. "

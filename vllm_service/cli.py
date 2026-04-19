@@ -725,7 +725,7 @@ def cmd_kubeai_sync_resource_profiles(args: argparse.Namespace) -> int:
     target = save_kubeai_resource_profiles(root_dir(), values_doc)
     if plan_path().exists():
         plan_path().unlink()
-    profiles, _ = load_kubeai_resource_profiles(root_dir())
+    profiles, _, _ = load_kubeai_resource_profiles(root_dir())
     print(f"Wrote {target}")
     print(f"Synced {len(profiles)} KubeAI resource profile(s)")
     return 0
@@ -782,7 +782,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument(
         "--resource-profiles-file",
         default=None,
-        help="For kubeai setups, sync a local Helm values file with resourceProfiles into generated/kubeai/kubeai-values.yaml.",
+        help="For kubeai setups, sync a local Helm values file with resourceProfiles into kubeai-values.local.yaml.",
     )
     s.set_defaults(func=cmd_setup)
 

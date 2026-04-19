@@ -99,3 +99,20 @@ Design takeaways:
 1. A local generated artifact can safely be the source of truth if there is an explicit sync step and render invalidates stale plans after that sync.
 2. Compatibility fallbacks are worth keeping when they preserve an existing happy path without weakening the new preferred source of truth.
 3. Namespace-sensitive Kubernetes errors are much more actionable when the CLI points back to the exact namespace-setting command users actually ran.
+
+## 2026-04-19 00:03:50 +0000
+
+Summary of user intent: revise the KubeAI resource-profile patch so the synced canonical input is no longer the same path as the generated render output, while preserving the original bugfix intent and keeping config fallback behavior intact unless the user explicitly adopts the sync flow.
+
+Model and configuration: Codex (GPT-5-based coding agent), default in-session configuration.
+
+This revision fixed the design seam the prior patch had introduced. Treating `generated/kubeai/kubeai-values.yaml` as both durable input and render output made `render` a hidden state transition, which is exactly the opposite of what a generated directory should mean. The new model is cleaner: `kubeai-values.local.yaml` is the explicit synced local input file, and `generated/kubeai/kubeai-values.yaml` is the rendered output artifact copied from the chosen input source for the current plan. That means a normal render no longer changes future source selection, and the old `config.yaml.resource_profiles` fallback keeps working until the user explicitly adopts the sync flow.
+
+The important compatibility nuance was to preserve fallback semantics after render, not just before it. I changed KubeAI resolution so it prefers the synced local file only when that file exists; otherwise it continues using `config.yaml.resource_profiles`. Because the rendered artifact is now always derived from `deployment["resource_profiles_values"]`, changing config and re-rendering still updates the generated Helm values file when no synced local file has been adopted. Once a synced file exists, it wins intentionally, and that win is now explicit and inspectable rather than an accidental side effect of having rendered once in the past.
+
+I also tightened the non-lossy requirement by preserving raw `resourceProfiles` entries from the synced values document instead of normalizing them down to only the currently understood fields. Validation still only cares about profile names, but rendering now writes the synced values document back out verbatim enough to keep extra supported or unknown keys like `extraField` intact. That felt like the right compromise: preserve structure when the user intentionally synced a Helm values file, but keep the internal config fallback simpler for the legacy path.
+
+Design takeaways:
+1. Generated output should be derivable from canonical state, not reused as canonical state itself.
+2. A compatibility fallback is only real if normal output generation cannot silently disable it.
+3. When syncing user-supplied Helm values, preserving unknown keys is often safer than inventing a lossy normalization layer.

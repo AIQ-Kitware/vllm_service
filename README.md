@@ -267,11 +267,13 @@ EOF
 cat values-kubeai-local-gpu.yaml
 ```
 
-Sync that file into the local source of truth used by `validate`, `render`, and the Helm install step:
+Sync that file into the local source of truth used by `validate` and `render`:
 
 ```bash
 python manage.py kubeai-sync-resource-profiles --from-file values-kubeai-local-gpu.yaml
 ```
+
+That command writes `kubeai-values.local.yaml`. The KubeAI renderer then copies that local source into `generated/kubeai/kubeai-values.yaml` as a render output artifact.
 
 Install KubeAI. If `.env` exists, this will load `HF_TOKEN` from there. If `HF_TOKEN` is already exported in your shell, that works too. If you only use public models, `HF_TOKEN` is optional.
 
@@ -286,7 +288,7 @@ KUBEAI_HELM_ARGS=(
   helm upgrade --install kubeai kubeai/kubeai
   -n kubeai
   --create-namespace
-  -f generated/kubeai/kubeai-values.yaml
+  -f kubeai-values.local.yaml
   --wait
 )
 
@@ -301,7 +303,9 @@ If `HF_TOKEN` is already in your environment, this effectively resolves to:
 
 ```bash
 helm upgrade --install kubeai kubeai/kubeai \
-  -f values-kubeai-local-gpu.yaml \
+  -n kubeai \
+  --create-namespace \
+  -f kubeai-values.local.yaml \
   --set secrets.huggingface.token="$HF_TOKEN" \
   --wait
 ```

@@ -5,12 +5,12 @@ from typing import Any
 
 import yaml
 
-from ..config import resource_profiles_to_kubeai_values
 from ..profile_runtime import vllm_args
 
 
 def _resource_profile_values(plan: dict[str, Any]) -> dict[str, Any]:
-    return resource_profiles_to_kubeai_values(plan.get("deployment", {}).get("resource_profiles", {}))
+    values_doc = plan.get("deployment", {}).get("resource_profiles_values", {})
+    return values_doc or {"resourceProfiles": {}}
 
 
 def _model_doc(service: dict[str, Any]) -> dict[str, Any]:
