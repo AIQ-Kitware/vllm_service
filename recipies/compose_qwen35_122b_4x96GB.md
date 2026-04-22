@@ -1,6 +1,6 @@
-# Compose recipe: Qwen3.5-122B-A10B-FP8 on a 4x96GB host
+# Compose recipe: Qwen3.5-122B-A10B on a 4x96GB host
 
-This is the shortest working end-to-end example for serving **Qwen/Qwen3.5-122B-A10B-FP8** on a machine with **4 x 96GB GPUs** using the **Compose** backend.
+This is the shortest working end-to-end example for serving **Qwen/Qwen3.5-122B-A10B** on a machine with **4 x 96GB GPUs** using the **Compose** backend.
 
 This profile uses:
 
@@ -8,7 +8,7 @@ This profile uses:
 - all 4 GPUs
 - tensor parallel size 4
 - text-only mode
-- native **262,144** token context
+- **131,072** token context
 - Open WebUI on top of LiteLLM
 
 ---
@@ -42,40 +42,40 @@ Overwrite `models.yaml` with:
 ```bash
 cat > models.yaml <<'EOF'
 models:
-  qwen3.5-122b-a10b-fp8-local:
-    hf_model_id: Qwen/Qwen3.5-122B-A10B-FP8
-    tokenizer_name: Qwen/Qwen3.5-122B-A10B-FP8
-    served_model_name: qwen3.5-122b-a10b-fp8-262k
+  qwen3.5-122b-a10b-local:
+    hf_model_id: Qwen/Qwen3.5-122B-A10B
+    tokenizer_name: Qwen/Qwen3.5-122B-A10B
+    served_model_name: qwen3.5-122b-a10b-128k
     family: qwen3.5
     modalities: [text]
     memory_class_gib: 80
     min_vram_gib_per_replica: 80
     preferred_gpu_count: 4
-    context_window: 262144
+    context_window: 131072
     defaults:
-      max_model_len: 262144
+      max_model_len: 131072
       gpu_memory_utilization: 0.95
       enable_prefix_caching: false
       max_num_batched_tokens: 1024
       max_num_seqs: 1
 
 profiles:
-  qwen3.5-122b-a10b-fp8-tp4-262k-local:
-    description: "Single Qwen3.5-122B-A10B-FP8 service across all 4 GPUs at 262k context."
+  qwen3.5-122b-a10b-tp4-128k-local:
+    description: "Single Qwen3.5-122B-A10B service across all 4 GPUs at 128k context."
     vllm:
       enable_responses_api_store: false
       logging_level: INFO
     services:
-      - service_name: qwen-122b-fp8
-        model: qwen3.5-122b-a10b-fp8-local
-        served_model_name: qwen3.5-122b-a10b-fp8-262k
+      - service_name: qwen-122b
+        model: qwen3.5-122b-a10b-local
+        served_model_name: qwen3.5-122b-a10b-128k
         placement:
           strategy: exact
           gpu_indices: [0, 1, 2, 3]
         topology:
           tensor_parallel_size: 4
         runtime:
-          max_model_len: 262144
+          max_model_len: 131072
           gpu_memory_utilization: 0.95
           max_num_batched_tokens: 1024
           max_num_seqs: 1
@@ -84,10 +84,15 @@ profiles:
           - --language-model-only
           - --reasoning-parser
           - qwen3
+          - --enable-log-requests
+          - --max-log-len
+          - "4000"
+          - --enable-prompt-tokens-details
+          - --enable-force-include-usage
 
     router:
       aliases:
-        qwen3.5-122b-a10b-fp8-262k: qwen-122b-fp8
+        qwen3.5-122b-a10b-128k: qwen-122b
 EOF
 ```
 
@@ -96,7 +101,7 @@ EOF
 ## 4. Switch to the local profile
 
 ```bash
-python manage.py switch qwen3.5-122b-a10b-fp8-tp4-262k-local
+python manage.py switch qwen3.5-122b-a10b-tp4-128k-local
 ```
 
 ---
@@ -150,7 +155,7 @@ curl http://127.0.0.1:18000/v1/models   -H "Authorization: Bearer $(grep '^VLLM_
 
 You should see:
 
-- `qwen3.5-122b-a10b-fp8-262k`
+- `qwen3.5-122b-a10b-128k`
 
 ---
 
@@ -166,7 +171,7 @@ On first run, create the Open WebUI admin account.
 
 Then select the model:
 
-- `qwen3.5-122b-a10b-fp8-262k`
+- `qwen3.5-122b-a10b-128k`
 
 ---
 
@@ -175,7 +180,7 @@ Then select the model:
 From the repo root:
 
 ```bash
-python manage.py smoke-test   --model qwen3.5-122b-a10b-fp8-262k   --prompt "Say hello in one sentence."
+python manage.py smoke-test   --model qwen3.5-122b-a10b-128k   --prompt "Say hello in one sentence."
 ```
 
 ---
@@ -184,8 +189,8 @@ python manage.py smoke-test   --model qwen3.5-122b-a10b-fp8-262k   --prompt "Say
 
 This profile serves:
 
-- `Qwen/Qwen3.5-122B-A10B-FP8`
+- `Qwen/Qwen3.5-122B-A10B`
 - on 4 x 96GB GPUs
 - with tensor parallel size 4
-- at 262,144 token context
+- at 131,072 token context
 - through both the direct backend and Open WebUI

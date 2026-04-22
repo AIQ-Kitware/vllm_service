@@ -1,6 +1,6 @@
-# Compose recipe: Qwen3.5-122B-A10B-FP8 on a 4x96GB host
+# Compose recipe: Qwen3.6-35B-A3B on a 4x96GB host
 
-This is the shortest working end-to-end example for serving **Qwen/Qwen3.5-122B-A10B-FP8** on a machine with **4 x 96GB GPUs** using the **Compose** backend.
+This is the shortest end-to-end example for serving **Qwen/Qwen3.6-35B-A3B** on a machine with **4 x 96GB GPUs** using the **Compose** backend.
 
 This profile uses:
 
@@ -9,6 +9,7 @@ This profile uses:
 - tensor parallel size 4
 - text-only mode
 - native **262,144** token context
+- the Qwen reasoning parser
 - Open WebUI on top of LiteLLM
 
 ---
@@ -42,43 +43,43 @@ Overwrite `models.yaml` with:
 ```bash
 cat > models.yaml <<'EOF'
 models:
-  qwen3.5-122b-a10b-fp8-local:
-    hf_model_id: Qwen/Qwen3.5-122B-A10B-FP8
-    tokenizer_name: Qwen/Qwen3.5-122B-A10B-FP8
-    served_model_name: qwen3.5-122b-a10b-fp8-262k
-    family: qwen3.5
+  qwen3.6-35b-a3b-local:
+    hf_model_id: Qwen/Qwen3.6-35B-A3B
+    tokenizer_name: Qwen/Qwen3.6-35B-A3B
+    served_model_name: qwen3.6-35b-a3b-262k
+    family: qwen3.6
     modalities: [text]
     memory_class_gib: 80
-    min_vram_gib_per_replica: 80
-    preferred_gpu_count: 4
+    min_vram_gib_per_replica: 24
+    preferred_gpu_count: 2
     context_window: 262144
     defaults:
       max_model_len: 262144
-      gpu_memory_utilization: 0.95
+      gpu_memory_utilization: 0.90
       enable_prefix_caching: false
-      max_num_batched_tokens: 1024
-      max_num_seqs: 1
+      max_num_batched_tokens: 4096
+      max_num_seqs: 2
 
 profiles:
-  qwen3.5-122b-a10b-fp8-tp4-262k-local:
-    description: "Single Qwen3.5-122B-A10B-FP8 service across all 4 GPUs at 262k context."
+  qwen3.6-35b-a3b-tp2-262k-local:
+    description: "Single Qwen3.6-35B-A3B service across 2 GPUs at 262k context."
     vllm:
       enable_responses_api_store: false
       logging_level: INFO
     services:
-      - service_name: qwen-122b-fp8
-        model: qwen3.5-122b-a10b-fp8-local
-        served_model_name: qwen3.5-122b-a10b-fp8-262k
+      - service_name: qwen36-35b
+        model: qwen3.6-35b-a3b-local
+        served_model_name: qwen3.6-35b-a3b-262k
         placement:
           strategy: exact
-          gpu_indices: [0, 1, 2, 3]
+          gpu_indices: [0, 1]
         topology:
-          tensor_parallel_size: 4
+          tensor_parallel_size: 2
         runtime:
           max_model_len: 262144
-          gpu_memory_utilization: 0.95
-          max_num_batched_tokens: 1024
-          max_num_seqs: 1
+          gpu_memory_utilization: 0.90
+          max_num_batched_tokens: 4096
+          max_num_seqs: 2
           enable_prefix_caching: false
         extra_args:
           - --language-model-only
@@ -87,7 +88,7 @@ profiles:
 
     router:
       aliases:
-        qwen3.5-122b-a10b-fp8-262k: qwen-122b-fp8
+        qwen3.6-35b-a3b-262k: qwen36-35b
 EOF
 ```
 
@@ -96,7 +97,7 @@ EOF
 ## 4. Switch to the local profile
 
 ```bash
-python manage.py switch qwen3.5-122b-a10b-fp8-tp4-262k-local
+python manage.py switch qwen3.6-35b-a3b-tp4-262k-local
 ```
 
 ---
@@ -150,7 +151,7 @@ curl http://127.0.0.1:18000/v1/models   -H "Authorization: Bearer $(grep '^VLLM_
 
 You should see:
 
-- `qwen3.5-122b-a10b-fp8-262k`
+- `qwen3.6-35b-a3b-262k`
 
 ---
 
@@ -166,7 +167,7 @@ On first run, create the Open WebUI admin account.
 
 Then select the model:
 
-- `qwen3.5-122b-a10b-fp8-262k`
+- `qwen3.6-35b-a3b-262k`
 
 ---
 
@@ -175,7 +176,7 @@ Then select the model:
 From the repo root:
 
 ```bash
-python manage.py smoke-test   --model qwen3.5-122b-a10b-fp8-262k   --prompt "Say hello in one sentence."
+python manage.py smoke-test   --model qwen3.6-35b-a3b-262k   --prompt "Say hello in one sentence."
 ```
 
 ---
@@ -184,8 +185,9 @@ python manage.py smoke-test   --model qwen3.5-122b-a10b-fp8-262k   --prompt "Say
 
 This profile serves:
 
-- `Qwen/Qwen3.5-122B-A10B-FP8`
+- `Qwen/Qwen3.6-35B-A3B`
 - on 4 x 96GB GPUs
 - with tensor parallel size 4
 - at 262,144 token context
+- with `--reasoning-parser qwen3`
 - through both the direct backend and Open WebUI
